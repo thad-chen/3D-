@@ -534,21 +534,30 @@ function recalc() {
       }
       if (typesInLayer.length === 0) continue;
 
-      const yCenter = lyr * layerH + eff[typesInLayer[0].tIdx].H / 2;
-      const yTop = (lyr + 1) * layerH;
-      const usableBw = boardW(yTop, usePhysical);
+      const yBase = lyr * layerH;  // bottom of this layer
+      const yLayerTop = yBase + layerH;
+      const usableBw = boardW(yLayerTop, usePhysical);
       let curZ = 0;
 
       for (let ti = 0; ti < typesInLayer.length; ti++) {
         const { tIdx, cnt } = typesInLayer[ti];
         const e = eff[tIdx];
+        const yCenter = yBase + e.H / 2;   // per-type center (bottom-aligned)
+        const boxTop = yBase + e.H;         // actual box top
+        const heightOver = boxTop > bh;     // height overflow (box protrudes above board)
+
         const eZDepth = e.nRows * e.effL;
         const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
 
         // If Z-band doesn't fit in remaining board length → this type overflows
-        if (curZ + eZDepth > bl) {
+        if (!heightOver && curZ + eZDepth > bl) {
           overflowCount += cnt;
-          continue; // skip — too much Z, no cross-layer auto-stack
+          continue;
+        }
+        // If box is taller than board → all boxes of this type overflow
+        if (heightOver) {
+          overflowCount += cnt;
+          continue;
         }
 
         let placed = 0, maxRowUsed = 0;
