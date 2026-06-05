@@ -72,6 +72,11 @@ body { font-family:"Microsoft YaHei",sans-serif; background:#0d0d1a; color:#eee;
     <input type="checkbox" id="chkManual">
     <label for="chkManual">手工排布（逐层指定各箱型件数）</label>
   </div>
+  <div class="toggle-row" id="manualLayerCountRow" style="display:none;">
+    <label for="inpLayerCount">层数:</label>
+    <input type="number" id="inpLayerCount" min="1" max="20" value="0" style="width:48px;height:22px;background:#1a1a2e;color:#eee;border:1px solid #334;border-radius:4px;padding:1px 4px;font-size:11px;text-align:center;margin-left:4px;">
+    <span style="font-size:8px;color:#667;margin-left:4px;">（0=自动）</span>
+  </div>
 
   <!-- Manual layer table -->
   <div class="ctrl" id="layerCfg" style="display:none;">
@@ -369,16 +374,27 @@ function buildLayerTable(nColsArr, layerH, maxLayers, bd, usePhysical) {
   if (maxLayers <= 1) {
     const maxH = Math.max(...boxTypes.map(bt => bt.H));
     limitHint.style.display = 'block';
-    limitHint.textContent = `⚠ 最高箱型 H=${maxH}cm，板高 ${bd.breaks[3].y}cm，当前只能堆 ${maxLayers} 层。减小箱高可增加层数。`;
+    limitHint.textContent = `⚠ 最高箱型 H=${maxH}cm，板高 ${bd.breaks[3].y}cm，当前只能堆 ${maxLayers} 层。可手动设置层数。`;
   } else {
     limitHint.style.display = 'none';
   }
+
+  // Save existing user data before clearing
+  const saved = {};
+  const oldRows = tbody.querySelectorAll('tr');
+  oldRows.forEach((row, lyr) => {
+    const inputs = row.querySelectorAll('.type-inp');
+    inputs.forEach(inp => {
+      const btId = inp.dataset.type;
+      const val = parseInt(inp.value) || 0;
+      if (val > 0) saved[`${lyr}_${btId}`] = val;
+    });
+  });
 
   thead.innerHTML = '<tr><th>层</th><th>高(cm)</th>';
   boxTypes.forEach((bt, i) => { thead.innerHTML += `<th style="color:${bt.color}">箱${i+1}<br><span style="font-size:7px;color:#556;">Z区${i+1}</span></th>`; });
   thead.innerHTML += '<th>合计</th></tr>';
 
-  // Clear and rebuild — always start fresh (no carry-over)
   tbody.innerHTML = '';
   for (let lyr = 0; lyr < maxLayers; lyr++) {
     const yBot = lyr * layerH;
@@ -388,7 +404,8 @@ function buildLayerTable(nColsArr, layerH, maxLayers, bd, usePhysical) {
     tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${yBot}-${yTop}</td>`;
     boxTypes.forEach((bt, i) => {
       const inId = `lyr${lyr}_t${bt.id}`;
-      tr.innerHTML += `<td><input type="number" class="type-inp" id="${inId}" min="0" step="1" value="0" data-layer="${lyr}" data-type="${bt.id}"></td>`;
+      const savedVal = saved[`${lyr}_${bt.id}`] || 0;
+      tr.innerHTML += `<td><input type="number" class="type-inp" id="${inId}" min="0" step="1" value="${savedVal}" data-layer="${lyr}" data-type="${bt.id}"></td>`;
     });
     tr.innerHTML += `<td class="layer-total" id="lyr${lyr}_total">0</td>`;
     tbody.appendChild(tr);
@@ -461,7 +478,11 @@ function recalc() {
   const bd = getBoard(usePhysical);
   const bw = bd.breaks[0].w, bl = bd.length, bh = bd.breaks[3].y;
   const layerH = getLayerHeight();
-  const maxLayers = Math.floor(bh / layerH);
+  const autoMaxLayers = Math.max(1, Math.floor(bh / layerH));
+
+  // Manual layer count override
+  const manualLayerCount = parseInt(document.getElementById('inpLayerCount').value) || 0;
+  const maxLayers = (manual && manualLayerCount > 0) ? manualLayerCount : autoMaxLayers;
 
   document.getElementById('dimLabel').textContent = (usePhysical?'物理板面':'有效装载') + ` ${bw}×${bh}×${bl}cm`;
   const effBw = BOARD_EFF.breaks[0].w;
@@ -481,13 +502,14 @@ function recalc() {
   // Build table if needed (ONLY when dimensions/board/types change)
   if (manual) {
     document.getElementById('layerCfg').style.display = 'block';
+    document.getElementById('manualLayerCountRow').style.display = 'flex';
     if (tableNeedsBuild) {
       buildLayerTable(eff.map(e => ({ nCols: e.nCols, nRows: e.nRows })), layerH, maxLayers, bd, usePhysical);
       tableNeedsBuild = false;
-      // No auto-prefill — user controls quantities manually
     }
   } else {
     document.getElementById('layerCfg').style.display = 'none';
+    document.getElementById('manualLayerCountRow').style.display = 'none';
   }
 
   updateLegend();
@@ -609,6 +631,7 @@ function fullRebuild() {
 
 document.getElementById('chkPhysical').addEventListener('change', () => { tableNeedsBuild = true; fullRebuild(); });
 document.getElementById('chkManual').addEventListener('change', () => { tableNeedsBuild = true; recalc(); });
+document.getElementById('inpLayerCount').addEventListener('change', () => { tableNeedsBuild = true; recalc(); });
 
 // Init box types
 boxTypes.push(defaultType());
