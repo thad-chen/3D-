@@ -7,7 +7,7 @@
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:"Microsoft YaHei",sans-serif; background:#0d0d1a; color:#eee; overflow:hidden; height:100vh; display:flex; }
-#panel { width:460px; min-width:460px; background:#0f0f23ee; backdrop-filter:blur(12px); padding:8px 10px; display:flex; flex-direction:column; gap:4px; z-index:10; border-right:1px solid #1e1e3a; overflow-y:auto; }
+#panel { width:380px; min-width:380px; background:#0f0f23ee; backdrop-filter:blur(12px); padding:8px 10px; display:flex; flex-direction:column; gap:4px; z-index:10; border-right:1px solid #1e1e3a; overflow-y:auto; }
 #panel h2 { font-size:14px; color:#e94560; text-align:center; margin:0; }
 #panel .sub { font-size:9px; color:#556; text-align:center; }
 .ctrl { background:#14142b; border-radius:8px; padding:5px 7px; }
@@ -46,13 +46,9 @@ body { font-family:"Microsoft YaHei",sans-serif; background:#0d0d1a; color:#eee;
 #layerCfg table { width:100%; border-collapse:collapse; }
 #layerCfg th { font-size:9px; color:#667; padding:4px 3px; text-align:center; border-bottom:1px solid #1e1e3a; background:#14142b; }
 #layerCfg td { padding:3px 4px; text-align:center; font-size:10px; }
-#layerCfg td .type-cnt { width:30px; height:20px; background:#1a1a2e; color:#eee; border:1px solid #334; border-radius:3px; padding:1px 2px; font-size:9px; text-align:center; outline:none; }
-#layerCfg td .type-cnt:focus { border-color:#e94560; }
-#layerCfg td .type-col, #layerCfg td .type-row { width:24px; height:18px; background:#1a1a2e; color:#aaa; border:1px solid #223; border-radius:3px; padding:0 1px; font-size:8px; text-align:center; outline:none; }
-#layerCfg td .type-col:focus, #layerCfg td .type-row:focus { border-color:#339af0; color:#eee; }
-#layerCfg td .manual-cell { display:flex; align-items:center; justify-content:center; gap:2px; }
-#layerCfg td .manual-cell .mr-label { font-size:7px; color:#556; }
-#layerCfg .cnt-warn { background:#ff333322 !important; border-color:#ff3333 !important; }
+#layerCfg td .type-inp { width:52px; height:28px; background:#1a1a2e; color:#eee; border:1px solid #334; border-radius:4px; padding:2px 4px; font-size:12px; text-align:center; outline:none; transition:all .15s; }
+#layerCfg td .type-inp:focus { border-color:#e94560; background:#1a1525; box-shadow:0 0 0 1px #e9456033; }
+#layerCfg .layer-grid { font-size:7px; color:#445; display:block; margin-top:1px; }
 #layerCfg .layer-h { font-size:9px; color:#889; white-space:nowrap; }
 #layerCfg .layer-total { font-size:10px; color:#3ddc84; font-weight:bold; }
 #layerCfg .limit-hint { font-size:9px; color:#f5a623; text-align:center; padding:5px; margin-top:4px; background:#1a1510; border-radius:4px; border:1px solid #f5a62333; }
@@ -373,9 +369,8 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
   const tbody = document.getElementById('layerTable');
   const hint = document.getElementById('layerHint');
   const limitHint = document.getElementById('layerLimitHint');
-  hint.textContent = `共${maxLayers}层 · 每层高${layerH}cm · 件/列/行 手工输入`;
+  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 输入件数自动排布`;
 
-  // 层数限制提示
   if (maxLayers <= 1) {
     const maxH = Math.max(...boxTypes.map(bt => bt.H));
     limitHint.style.display = 'block';
@@ -384,30 +379,20 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
     limitHint.style.display = 'none';
   }
 
-  // Save existing user data (cnt, col, row) before clearing
+  // Save existing counts
   const saved = {};
   const oldRows = tbody.querySelectorAll('tr');
   oldRows.forEach((row, lyr) => {
-    row.querySelectorAll('.type-cnt').forEach(inp => {
+    row.querySelectorAll('.type-inp').forEach(inp => {
       const btId = inp.dataset.type;
       const val = parseInt(inp.value) || 0;
-      saved[`${lyr}_${btId}_cnt`] = val;
-    });
-    row.querySelectorAll('.type-col').forEach(inp => {
-      const btId = inp.dataset.type;
-      const val = parseInt(inp.value) || 0;
-      saved[`${lyr}_${btId}_col`] = val;
-    });
-    row.querySelectorAll('.type-row').forEach(inp => {
-      const btId = inp.dataset.type;
-      const val = parseInt(inp.value) || 0;
-      saved[`${lyr}_${btId}_row`] = val;
+      if (val > 0) saved[`${lyr}_${btId}`] = val;
     });
   });
 
-  thead.innerHTML = '<tr><th>层</th><th>高(cm)</th>';
+  thead.innerHTML = '<tr><th>层</th><th>高</th>';
   boxTypes.forEach((bt, i) => {
-    thead.innerHTML += `<th style="color:${bt.color};font-size:9px;">箱${i+1}<br><span style="font-size:7px;color:#556;">件 | 列 | 行</span></th>`;
+    thead.innerHTML += `<th style="color:${bt.color}">箱${i+1}<br><span style="font-size:7px;color:#556;">件数</span></th>`;
   });
   thead.innerHTML += '<th>合计</th></tr>';
 
@@ -419,40 +404,27 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${yBot}-${yTop}</td>`;
     boxTypes.forEach((bt, tIdx) => {
+      const savedCnt = saved[`${lyr}_${bt.id}`] || 0;
       const e = eff[tIdx];
-      // Auto defaults (only used when saved value is 0)
-      const boxTopDef = yBot + e.H;
-      const autoBw = boardW(boxTopDef, usePhysical);
+      const boxTop = yBot + e.H;
+      const autoBw = boxTop > bd.breaks[3].y ? 0 : boardW(boxTop, usePhysical);
       const autoCols = autoBw > 0 ? Math.floor(autoBw / e.effW) : 0;
       const autoRows = Math.floor(bd.length / e.effL);
-
-      const cntVal = saved[`${lyr}_${bt.id}_cnt`] || 0;
-      const colVal = saved[`${lyr}_${bt.id}_col`] || autoCols;
-      const rowVal = saved[`${lyr}_${bt.id}_row`] || autoRows;
-
-      tr.innerHTML += `<td><div class="manual-cell">
-        <input type="number" class="type-cnt" id="lyr${lyr}_t${bt.id}_cnt" value="${cntVal}" data-layer="${lyr}" data-type="${bt.id}" placeholder="件" min="0" step="1">
-        <input type="number" class="type-col" id="lyr${lyr}_t${bt.id}_col" value="${colVal}" data-layer="${lyr}" data-type="${bt.id}" placeholder="列" min="0" step="1">
-        <input type="number" class="type-row" id="lyr${lyr}_t${bt.id}_row" value="${rowVal}" data-layer="${lyr}" data-type="${bt.id}" placeholder="行" min="0" step="1">
-      </div></td>`;
+      tr.innerHTML += `<td>
+        <input type="number" class="type-inp" id="lyr${lyr}_t${bt.id}" value="${savedCnt}" data-layer="${lyr}" data-type="${bt.id}" min="0" step="1">
+        <span class="layer-grid">${autoCols}列×${autoRows}行</span>
+      </td>`;
     });
     tr.innerHTML += `<td class="layer-total" id="lyr${lyr}_total">0</td>`;
     tbody.appendChild(tr);
   }
 
-  // Bind manual inputs — recalc on change
-  tbody.querySelectorAll('.type-cnt, .type-col, .type-row').forEach(inp => {
-    inp.addEventListener('input', () => {
-      validateManualInputs();
-      updateLayerSubtotals();
-      recalc();
-    });
-    inp.addEventListener('change', () => {
-      validateManualInputs();
-      updateLayerSubtotals();
-      recalc();
-    });
+  tbody.querySelectorAll('.type-inp').forEach(inp => {
+    inp.addEventListener('input', () => { updateLayerSubtotals(); recalc(); });
+    inp.addEventListener('change', () => { updateLayerSubtotals(); recalc(); });
   });
+
+  updateLayerSubtotals();
 }
 
 function updateLayerSubtotals() {
@@ -463,7 +435,7 @@ function updateLayerSubtotals() {
   for (let lyr = 0; lyr < maxLayers; lyr++) {
     let sum = 0;
     boxTypes.forEach(bt => {
-      const inp = document.getElementById(`lyr${lyr}_t${bt.id}_cnt`);
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
       if (inp) sum += parseInt(inp.value) || 0;
     });
     const totalEl = document.getElementById(`lyr${lyr}_total`);
@@ -471,49 +443,17 @@ function updateLayerSubtotals() {
   }
 }
 
-function validateManualInputs() {
-  // Highlight row inputs that exceed col×row capacity, highlight col when box can't fit board width
-  const usePhysical = document.getElementById('chkPhysical').checked;
-  const bh = getBoard(usePhysical).breaks[3].y;
-  const layerH = getLayerHeight();
-  const autoMaxLayers = Math.max(1, Math.floor(bh / layerH));
-  const manualLayerCount = parseInt(document.getElementById('inpLayerCount').value) || 0;
-  const maxLayers = (manualLayerCount > 0) ? manualLayerCount : autoMaxLayers;
-
-  for (let lyr = 0; lyr < maxLayers; lyr++) {
-    const yBase = lyr * layerH;
-    boxTypes.forEach(bt => {
-      const cntEl = document.getElementById(`lyr${lyr}_t${bt.id}_cnt`);
-      const colEl = document.getElementById(`lyr${lyr}_t${bt.id}_col`);
-      const rowEl = document.getElementById(`lyr${lyr}_t${bt.id}_row`);
-      if (!cntEl || !colEl || !rowEl) return;
-      const cnt = parseInt(cntEl.value) || 0;
-      const nCols = parseInt(colEl.value) || 0;
-      const nRows = parseInt(rowEl.value) || 0;
-      const capacity = nCols * nRows;
-      // Warn if count exceeds grid capacity
-      if (cnt > 0 && capacity > 0 && cnt > capacity) {
-        cntEl.classList.add('cnt-warn');
-      } else {
-        cntEl.classList.remove('cnt-warn');
-      }
-    });
-  }
-}
-
-function readManualLayout(maxLayers) {
-  const layout = [];
+function readManualCounts(maxLayers) {
+  const counts = [];
   for (let lyr = 0; lyr < maxLayers; lyr++) {
     const layer = [];
-    boxTypes.forEach((bt, tIdx) => {
-      const cnt = parseInt(document.getElementById(`lyr${lyr}_t${bt.id}_cnt`)?.value) || 0;
-      const nCols = parseInt(document.getElementById(`lyr${lyr}_t${bt.id}_col`)?.value) || 0;
-      const nRows = parseInt(document.getElementById(`lyr${lyr}_t${bt.id}_row`)?.value) || 0;
-      layer.push({ tIdx, cnt, nCols, nRows });
+    boxTypes.forEach(bt => {
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
+      layer.push(inp ? Math.max(0, parseInt(inp.value) || 0) : 0);
     });
-    layout.push(layer);
+    counts.push(layer);
   }
-  return layout;
+  return counts;
 }
 
 function getLayerHeight() {
@@ -584,48 +524,53 @@ function recalc() {
   let totalBoxes = 0, overflowCount = 0;
 
   if (manual) {
-    const layout = readManualLayout(maxLayers);
+    const counts = readManualCounts(maxLayers);
     const bh = bd.breaks[3].y, bl = bd.length;
 
-    // ---- Manual placement: user controls columns & rows ----
-    // Each box type per layer gets a grid: nCols wide × nRows deep.
-    // Types within the same layer stack sequentially in Z.
-    // Count ≤ nCols×nRows → all fit. Count > nCols×nRows → excess overflows.
+    // === Manual mode: smart auto-layout ===
+    // For each layer, types flow in Z order.
+    // Each type gets: maxCols based on board width at boxTop,
+    //                 maxRows based on REMAINING Z space (not full board).
+    // This is the key fix — no more assuming full board length.
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
-      const yBase = lyr * layerH;  // bottom of this layer
-      let curZ = 0;                // Z cursor for stacking types
+      const yBase = lyr * layerH;
+      let curZ = 0;  // Z cursor, advances per type
 
-      for (let ti = 0; ti < layout[lyr].length; ti++) {
-        const { tIdx, cnt, nCols, nRows } = layout[lyr][ti];
+      for (let tIdx = 0; tIdx < eff.length; tIdx++) {
+        const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
         if (cnt <= 0) continue;
 
         const e = eff[tIdx];
-        const yCenter = yBase + e.H / 2;
         const boxTop = yBase + e.H;
+        const yCenter = yBase + e.H / 2;
 
-        // Height overflow → all boxes of this type overflow
+        // Height overflow → all boxes overflow
         if (boxTop > bh) {
           overflowCount += cnt;
           continue;
         }
 
-        // Use user-specified col/row; fall back to auto if zero
-        const useCols = nCols > 0 ? nCols : Math.floor(boardW(boxTop, usePhysical) / e.effW);
-        const useRows = nRows > 0 ? nRows : Math.floor(bl / e.effL);
-        const capacity = useCols * useRows;
+        // Columns: board width at this height
+        const usableBw = boardW(boxTop, usePhysical);
+        const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
+
+        // Rows: ONLY the remaining Z space, not the full board
+        const remainingZ = bl - curZ;
+        const maxRows = Math.min(e.nRows, Math.max(1, Math.floor(remainingZ / e.effL)));
+        const capacity = maxCols * maxRows;
+
         const fit = Math.min(cnt, capacity);
         const over = cnt - fit;
 
         let placed = 0;
-        for (let col = 0; col < useCols && placed < fit; col++) {
+        for (let col = 0; col < maxCols && placed < fit; col++) {
           const curX = col * e.effW;
           const cx = curX + e.effW / 2;
           const xR = (col + 1) * e.effW;
-          const usableBw = boardW(boxTop, usePhysical);
           const xOverflow = xR > usableBw;
 
-          for (let row = 0; row < useRows && placed < fit; row++) {
+          for (let row = 0; row < maxRows && placed < fit; row++) {
             const absZ = curZ + row * e.effL;
             const cz = absZ + e.effL / 2;
             const zR = absZ + e.effL;
@@ -641,10 +586,8 @@ function recalc() {
             placed++;
           }
         }
-        // Unplaced excess → overflow
         overflowCount += over;
-        // Advance Z by the rows occupied by this type
-        curZ += useRows * e.effL;
+        curZ += maxRows * e.effL;
       }
     }
   } else {
