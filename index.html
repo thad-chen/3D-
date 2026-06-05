@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>X1M 3D · 多箱型手工排布</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:"Microsoft YaHei",sans-serif; background:#0d0d1a; color:#eee; overflow:hidden; height:100vh; display:flex; }
+#panel { width:380px; min-width:380px; background:#0f0f23ee; backdrop-filter:blur(12px); padding:8px 10px; display:flex; flex-direction:column; gap:4px; z-index:10; border-right:1px solid #1e1e3a; overflow-y:auto; }
+#panel h2 { font-size:14px; color:#e94560; text-align:center; margin:0; }
+#panel .sub { font-size:9px; color:#556; text-align:center; }
+.ctrl { background:#14142b; border-radius:8px; padding:5px 7px; }
+.ctrl .title { font-size:10px; color:#ccc; margin-bottom:3px; display:flex; align-items:center; justify-content:space-between; gap:4px; }
+.ctrl .title .dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.ctrl .row { display:flex; align-items:center; gap:4px; margin-bottom:2px; }
+.ctrl .row:last-child { margin-bottom:0; }
+.ctrl .dim { font-size:9px; color:#aaa; width:12px; text-align:center; flex-shrink:0; }
+.ctrl input[type=range] { flex:1; min-width:50px; accent-color:var(--accent,#e94560); height:16px; }
+.ctrl input[type=number] { width:40px; height:20px; text-align:center; background:#1a1a2e; color:#eee; border:1px solid var(--accent,#334); border-radius:3px; padding:0 1px; font-size:9px; flex-shrink:0; }
+.ctrl .unit { font-size:8px; color:#556; width:14px; text-align:left; flex-shrink:0; }
+.ctrl .type-name { font-size:9px; font-weight:bold; min-width:18px; color:var(--accent,#e94560); }
+.tray-edge { --accent: #f5a623; border-left:2px solid #f5a623; }
+.toggle-row { display:flex; align-items:center; gap:8px; font-size:10px; color:#889; background:#14142b; border-radius:8px; padding:5px 8px; }
+.toggle-row input { accent-color:#e94560; }
+.toggle-row select { background:#1a1a2e; color:#eee; border:1px solid #334; border-radius:4px; padding:2px 4px; font-size:10px; }
+.btn { cursor:pointer; font-size:10px; padding:2px 8px; border-radius:4px; border:1px solid #334; color:#aaa; background:#1a1a2e; transition:all .15s; }
+.btn:hover { border-color:#667; color:#ddd; }
+.btn.del { color:#ff6b6b; border-color:#ff6b6b55; font-size:11px; padding:0 4px; min-width:18px; text-align:center; }
+.btn.del:hover { background:#ff6b6b22; border-color:#ff6b6b; }
+.btn.add { color:#3ddc84; border-color:#3ddc8455; width:100%; margin-top:2px; }
+.btn.add:hover { background:#3ddc8422; border-color:#3ddc84; }
+.stats { display:flex; flex-wrap:wrap; gap:3px; }
+.stat { background:#14142b; border-radius:6px; padding:5px; text-align:center; flex:1; min-width:40px; }
+.stat .n { font-size:16px; font-weight:bold; color:#e94560; }
+.stat .l { font-size:8px; color:#667; }
+.stat.valid .n { color:#3ddc84; }
+.stat.valid .l { color:#3ddc84; }
+.stat.ovr { border:1px solid #ff6b6b44; }
+.stat.ovr .n { color:#ff6b6b; }
+.stat.ovr .l { color:#ff6b6b; }
+.legend { font-size:8px; color:#556; display:flex; flex-wrap:wrap; gap:4px; }
+.legend span { display:flex; align-items:center; gap:2px; }
+.legend .dot { display:inline-block; width:7px; height:7px; border-radius:2px; }
+#layerCfg .layer-table-wrap { margin-top:4px; border:1px solid #1e1e3a; border-radius:6px; background:#0f0f23; overflow:visible; }
+#layerCfg table { width:100%; border-collapse:collapse; }
+#layerCfg th { font-size:9px; color:#667; padding:4px 3px; text-align:center; border-bottom:1px solid #1e1e3a; background:#14142b; }
+#layerCfg td { padding:3px 4px; text-align:center; font-size:10px; }
+#layerCfg td .type-inp { width:52px; height:24px; background:#1a1a2e; color:#eee; border:1px solid #334; border-radius:4px; padding:2px 4px; font-size:11px; text-align:center; outline:none; transition:all .15s; }
+#layerCfg td .type-inp:focus { border-color:#e94560; background:#1a1525; box-shadow:0 0 0 1px #e9456033; }
+#layerCfg .layer-h { font-size:9px; color:#889; white-space:nowrap; }
+#layerCfg .layer-total { font-size:10px; color:#3ddc84; font-weight:bold; }
+#layerCfg .limit-hint { font-size:9px; color:#f5a623; text-align:center; padding:5px; margin-top:4px; background:#1a1510; border-radius:4px; border:1px solid #f5a62333; }
+.hint { font-size:8px; color:#444; text-align:center; border-top:1px solid #1e1e3a; padding-top:4px; }
+#canvas3d { flex:1; position:relative; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h2>X1M 板 · 多箱型3D排布</h2>
+  <div class="sub" id="dimLabel">有效装载 234×244×300cm</div>
+
+  <!-- Box types (dynamic) -->
+  <div id="boxTypesContainer"></div>
+  <button class="btn add" id="btnAddType">+ 添加箱型</button>
+
+  <div class="toggle-row">
+    <input type="checkbox" id="chkPhysical">
+    <label for="chkPhysical">物理板面 底宽<span id="bwLabel">244</span>cm</label>
+  </div>
+  <div class="toggle-row">
+    <input type="checkbox" id="chkManual">
+    <label for="chkManual">手工排布（逐层指定各箱型件数）</label>
+  </div>
+
+  <!-- Manual layer table -->
+  <div class="ctrl" id="layerCfg" style="display:none;">
+    <div class="title">📋 每层排布 <span id="layerHint" style="font-size:8px;color:#667;">输入各箱型件数</span></div>
+    <div class="layer-table-wrap">
+      <table><thead id="layerHead"></thead><tbody id="layerTable"></tbody></table>
+    </div>
+    <div class="limit-hint" id="layerLimitHint" style="display:none;"></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat"><div class="n" id="sTypes">--</div><div class="l">箱型数</div></div>
+    <div class="stat"><div class="n" id="sLayers">--</div><div class="l">总层数</div></div>
+    <div class="stat" id="statValid"><div class="n" id="sTotal">--</div><div class="l">有效装载</div></div>
+    <div class="stat ovr" id="statOverflow"><div class="n" id="sOver">--</div><div class="l">⚠ 超收边</div></div>
+  </div>
+
+  <div class="legend" id="legendRow"></div>
+  <div class="hint">🖱 旋转/缩放/平移 · 手工模式逐层输入</div>
+</div>
+<div id="canvas3d"></div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ============================================================
+// Constants
+// ============================================================
+// Effective (usable) loading dimensions — this is the base truth.
+// Physical board = effective + MARGIN on each side.
+const BOARD_EFF = {
+  length: 300,
+  breaks: [
+    { y: 0,   w: 234 },
+    { y: 94,  w: 234 },
+    { y: 182, w: 193 },
+    { y: 244, w: 102 },
+  ]
+};
+const MARGIN = 5;  // per-side margin for physical→effective
+const TYPE_COLORS = ['#e94560','#3ddc84','#339af0','#ffcc00','#be4bdb','#20c997','#ff922b','#74c0fc','#f06595','#63e6be'];
+
+function getBoard(usePhysical) {
+  const src = BOARD_EFF;
+  if (usePhysical) {
+    return {
+      length: src.length + MARGIN * 2,
+      breaks: src.breaks.map(b => ({ y: b.y, w: b.w + MARGIN * 2 })),
+    };
+  }
+  return JSON.parse(JSON.stringify(src));
+}
+
+function boardW(y, usePhysical) {
+  const b = getBoard(usePhysical).breaks;
+  if (y <= b[1].y) return b[0].w;
+  if (y <= b[2].y) return b[1].w - (b[1].w - b[2].w) * (y - b[1].y) / (b[2].y - b[1].y);
+  if (y <= b[3].y) return b[2].w - (b[2].w - b[3].w) * (y - b[2].y) / (b[3].y - b[2].y);
+  return 0;
+}
+
+// ============================================================
+// State
+// ============================================================
+let boxTypes = [];
+let nextId = 0;
+let tableNeedsBuild = true;
+
+function defaultType() {
+  const id = nextId++;
+  return { id, W: 40, H: 40, L: 60, ori: 'WL', color: TYPE_COLORS[id % TYPE_COLORS.length] };
+}
+
+// ============================================================
+// Three.js
+// ============================================================
+const container = document.getElementById('canvas3d');
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setClearColor(0x0d0d1a);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 5, 2500);
+camera.position.set(380, 280, 520); camera.lookAt(122, 120, 150);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(122, 120, 150);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 80; controls.maxDistance = 1500; controls.update();
+
+scene.add(new THREE.AmbientLight('#445566', 2.5));
+const k=new THREE.DirectionalLight('#ccddff',3.5); k.position.set(-300,400,-200); scene.add(k);
+const f=new THREE.DirectionalLight('#8899cc',1.8); f.position.set(200,100,350); scene.add(f);
+const r=new THREE.DirectionalLight('#aabbdd',1.2); r.position.set(0,-50,500); scene.add(r);
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(1000,1000),new THREE.MeshBasicMaterial({color:0x111122,side:THREE.DoubleSide}));
+gnd.rotation.x=-Math.PI/2; gnd.position.set(122,-5,150); scene.add(gnd);
+const gd=new THREE.GridHelper(800,32,'#1a1a3a','#1a1a3a'); gd.position.set(122,0.05,150); scene.add(gd);
+
+// ============================================================
+// Sprite labels
+// ============================================================
+function makeLabel(text,color,size){
+  const c=document.createElement('canvas');c.width=256;c.height=64;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle=color||'#fff';ctx.font=`bold ${size||28}px "Microsoft YaHei"`;
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,128,32);
+  const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,depthWrite:false}));
+  s.scale.set(40,10,1);return s;
+}
+function makeArrowHead(color){
+  const geo=new THREE.ConeGeometry(4,10,8);
+  const mat=new THREE.MeshBasicMaterial({color});
+  const mesh=new THREE.Mesh(geo,mat);
+  return mesh;
+}
+
+const dimGroup=new THREE.Group();scene.add(dimGroup);
+function rebuildDims(b){
+  while(dimGroup.children.length)dimGroup.remove(dimGroup.children[0]);
+  const bw=b.breaks[0].w,bl=b.length,th=b.breaks[3].y;
+  const off = 25;
+  const thick = 3.0;
+
+  // --- Width (宽) - bright red, bottom edge ---
+  const wy = -12;
+  const wPts = [new THREE.Vector3(0,wy,0), new THREE.Vector3(bw,wy,0)];
+  const wLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(wPts),
+    new THREE.LineBasicMaterial({color:0xff4466,linewidth:thick,transparent:true,opacity:0.95}));
+  dimGroup.add(wLine);
+  const a0=makeArrowHead(0xff4466); a0.position.set(0,wy,0); a0.rotation.z=-Math.PI/2; dimGroup.add(a0);
+  const a1=makeArrowHead(0xff4466); a1.position.set(bw,wy,0); a1.rotation.z=Math.PI/2; dimGroup.add(a1);
+  const wlbl=makeLabel('宽 '+bw+'cm','#ff4466',38); wlbl.position.set(bw/2,wy-20,0); wlbl.scale.set(55,13,1); dimGroup.add(wlbl);
+
+  // --- Length (长) - bright green, right-bottom edge ---
+  const lPts = [new THREE.Vector3(-off,0,0), new THREE.Vector3(-off,0,bl)];
+  const lLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(lPts),
+    new THREE.LineBasicMaterial({color:0x33ff88,linewidth:thick,transparent:true,opacity:0.95}));
+  dimGroup.add(lLine);
+  const l0=makeArrowHead(0x33ff88); l0.position.set(-off,0,0); l0.rotation.x=-Math.PI/2; dimGroup.add(l0);
+  const l1=makeArrowHead(0x33ff88); l1.position.set(-off,0,bl); l1.rotation.x=Math.PI/2; dimGroup.add(l1);
+  const llbl=makeLabel('长 '+bl+'cm','#33ff88',38); llbl.position.set(-off-18,0,bl/2); llbl.scale.set(55,13,1); dimGroup.add(llbl);
+
+  // --- Height (高) - bright orange, left-back edge ---
+  const hPts = [new THREE.Vector3(-off,0,-off), new THREE.Vector3(-off,th,-off)];
+  const hLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(hPts),
+    new THREE.LineBasicMaterial({color:0xffaa33,linewidth:thick,transparent:true,opacity:0.95}));
+  dimGroup.add(hLine);
+  const h0=makeArrowHead(0xffaa33); h0.position.set(-off,0,-off); dimGroup.add(h0); // default points up
+  const h1=makeArrowHead(0xffaa33); h1.position.set(-off,th,-off); h1.rotation.z=Math.PI; dimGroup.add(h1);
+  const hlbl=makeLabel('高 '+th+'cm','#ffaa33',38); hlbl.position.set(-off-18,th/2,-off); hlbl.scale.set(55,13,1); dimGroup.add(hlbl);
+
+  // Small labels at break points
+  b.breaks.forEach((bk,i)=>{
+    if(i===0)return;
+    const s=makeLabel(bk.y+'cm','#aabbcc',18);
+    s.position.set(bk.w+18,bk.y,0);s.scale.set(25,6,1);dimGroup.add(s);
+  });
+}
+
+// ============================================================
+// Board mesh
+// ============================================================
+const boardGroup=new THREE.Group();scene.add(boardGroup);
+function rebuildBoard(b){
+  while(boardGroup.children.length)boardGroup.remove(boardGroup.children[0]);
+  const shape=new THREE.Shape();
+  shape.moveTo(0,0);shape.lineTo(b.breaks[0].w,0);
+  shape.lineTo(b.breaks[1].w,b.breaks[1].y);shape.lineTo(b.breaks[2].w,b.breaks[2].y);
+  shape.lineTo(b.breaks[3].w,b.breaks[3].y);shape.lineTo(0,b.breaks[3].y);shape.closePath();
+  const geo=new THREE.ExtrudeGeometry(shape,{steps:1,depth:b.length,bevelEnabled:false});
+  boardGroup.add(new THREE.Mesh(geo,new THREE.MeshLambertMaterial({color:0x1a3a5c,transparent:true,opacity:0.22,side:THREE.DoubleSide,depthWrite:false})));
+  boardGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0x4488cc})));
+}
+
+// ============================================================
+// Tray meshes
+// ============================================================
+const trayGroup=new THREE.Group();scene.add(trayGroup);
+function clearTrays(){while(trayGroup.children.length)trayGroup.remove(trayGroup.children[0]);}
+
+const boxGeoCache={};
+function getBoxGeo(w,h,d){const key=`${w},${h},${d}`;if(!boxGeoCache[key])boxGeoCache[key]=new THREE.BoxGeometry(w,h,d);return boxGeoCache[key];}
+
+function addBox(cx,cy,cz,w,h,d,color,isOver){
+  const geo=getBoxGeo(w,h,d);
+  const hex=parseInt(color.replace('#',''),16);
+  const mat=new THREE.MeshLambertMaterial({color:isOver?0xff3333:hex,transparent:true,opacity:isOver?0.8:0.72,emissive:isOver?0x440000:0,emissiveIntensity:isOver?0.35:0});
+  const m=new THREE.Mesh(geo,mat);m.position.set(cx,cy,cz);trayGroup.add(m);
+  const ec=isOver?0xff6666:0xffffff;
+  const eg=new THREE.EdgesGeometry(geo),em=new THREE.LineBasicMaterial({color:ec,transparent:true,opacity:isOver?0.85:0.2});
+  const e=new THREE.LineSegments(eg,em);e.position.copy(m.position);trayGroup.add(e);
+}
+
+// ============================================================
+// Box type UI
+// ============================================================
+const boxTypesContainer = document.getElementById('boxTypesContainer');
+
+function renderBoxTypes() {
+  boxTypesContainer.innerHTML = '';
+  boxTypes.forEach((bt, idx) => {
+    const div = document.createElement('div');
+    div.className = 'ctrl';
+    div.style.cssText = `--accent:${bt.color};border-left:2px solid ${bt.color};margin-bottom:3px;`;
+    div.innerHTML = `
+      <div class="title"><span class="dot" style="background:${bt.color}"></span>箱型${idx+1} (${bt.color})${boxTypes.length>1?`<button class="btn del" data-remove="${bt.id}">✕</button>`:''}</div>
+      <div class="row"><span class="dim">W</span><input type="range" class="btsl" data-id="${bt.id}" data-dim="W" min="10" max="234" value="${bt.W}" step="1"><input type="number" class="btnu" data-id="${bt.id}" data-dim="W" min="10" max="234" value="${bt.W}"><span class="unit">cm</span></div>
+      <div class="row"><span class="dim">H</span><input type="range" class="btsl" data-id="${bt.id}" data-dim="H" min="5" max="244" value="${bt.H}" step="1"><input type="number" class="btnu" data-id="${bt.id}" data-dim="H" min="5" max="244" value="${bt.H}"><span class="unit">cm</span></div>
+      <div class="row"><span class="dim">L</span><input type="range" class="btsl" data-id="${bt.id}" data-dim="L" min="10" max="300" value="${bt.L}" step="1"><input type="number" class="btnu" data-id="${bt.id}" data-dim="L" min="10" max="300" value="${bt.L}"><span class="unit">cm</span></div>
+      <div class="row"><span class="dim" style="font-size:8px;width:auto;">方向</span>
+        <select class="btori" data-id="${bt.id}" style="flex:1;background:#1a1a2e;color:#eee;border:1px solid ${bt.color};border-radius:4px;padding:1px 2px;font-size:9px;">
+          <option value="WL" ${bt.ori==='WL'?'selected':''}>横放 W沿宽 L沿长</option>
+          <option value="LW" ${bt.ori==='LW'?'selected':''}>竖放 L沿宽 W沿长</option>
+        </select>
+      </div>
+    `;
+    boxTypesContainer.appendChild(div);
+  });
+
+  // Bind events
+  boxTypesContainer.querySelectorAll('.btnu').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const id = parseInt(inp.dataset.id);
+      const dim = inp.dataset.dim;
+      const val = Math.max(1, parseInt(inp.value) || 1);
+      const bt = boxTypes.find(b => b.id === id);
+      if (bt) { bt[dim] = val; boxTypesContainer.querySelector(`.btsl[data-id="${id}"][data-dim="${dim}"]`).value = val; }
+      tableNeedsBuild = true;
+      recalc();
+    });
+    inp.addEventListener('change', () => inp.dispatchEvent(new Event('input')));
+  });
+  boxTypesContainer.querySelectorAll('.btsl').forEach(sl => {
+    sl.addEventListener('input', () => {
+      const id = parseInt(sl.dataset.id);
+      const dim = sl.dataset.dim;
+      const val = parseInt(sl.value);
+      const bt = boxTypes.find(b => b.id === id);
+      if (bt) { bt[dim] = val; boxTypesContainer.querySelector(`.btnu[data-id="${id}"][data-dim="${dim}"]`).value = val; }
+      tableNeedsBuild = true;
+      recalc();
+    });
+  });
+  boxTypesContainer.querySelectorAll('.btn.del').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.remove);
+      if (boxTypes.length <= 1) return;
+      boxTypes = boxTypes.filter(b => b.id !== id);
+      tableNeedsBuild = true;
+      renderBoxTypes();
+      recalc();
+    });
+  });
+  boxTypesContainer.querySelectorAll('.btori').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const id = parseInt(sel.dataset.id);
+      const bt = boxTypes.find(b => b.id === id);
+      if (bt) { bt.ori = sel.value; }
+      tableNeedsBuild = true;
+      recalc();
+    });
+  });
+}
+
+document.getElementById('btnAddType').addEventListener('click', () => {
+  boxTypes.push(defaultType());
+  tableNeedsBuild = true;
+  renderBoxTypes();
+  recalc();
+});
+
+// ============================================================
+// Manual table
+// ============================================================
+function buildLayerTable(nColsArr, layerH, maxLayers, bd, usePhysical) {
+  const thead = document.getElementById('layerHead');
+  const tbody = document.getElementById('layerTable');
+  const hint = document.getElementById('layerHint');
+  const limitHint = document.getElementById('layerLimitHint');
+  hint.textContent = `共${maxLayers}层 · 每层高${layerH}cm · Z区顺序排列`;
+
+  // 层数限制提示
+  if (maxLayers <= 1) {
+    const maxH = Math.max(...boxTypes.map(bt => bt.H));
+    limitHint.style.display = 'block';
+    limitHint.textContent = `⚠ 最高箱型 H=${maxH}cm，板高 ${bd.breaks[3].y}cm，当前只能堆 ${maxLayers} 层。减小箱高可增加层数。`;
+  } else {
+    limitHint.style.display = 'none';
+  }
+
+  thead.innerHTML = '<tr><th>层</th><th>高(cm)</th>';
+  boxTypes.forEach((bt, i) => { thead.innerHTML += `<th style="color:${bt.color}">箱${i+1}<br><span style="font-size:7px;color:#556;">Z区${i+1}</span></th>`; });
+  thead.innerHTML += '<th>合计</th></tr>';
+
+  // Preserve existing user edits before clearing
+  const saved = {};
+  boxTypes.forEach(bt => {
+    for (let lyr = 0; lyr < maxLayers; lyr++) {
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
+      if (inp) saved[`${lyr}_${bt.id}`] = inp.value;
+    }
+  });
+
+  tbody.innerHTML = '';
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    const yBot = lyr * layerH;
+    const yTop = yBot + layerH;
+    const bW = boardW(yTop, usePhysical);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${yBot}-${yTop}</td>`;
+    boxTypes.forEach((bt, i) => {
+      const inId = `lyr${lyr}_t${bt.id}`;
+      const savedVal = saved[`${lyr}_${bt.id}`];
+      const val = savedVal !== undefined ? savedVal : 0;
+      tr.innerHTML += `<td><input type="number" class="type-inp" id="${inId}" min="0" step="1" value="${val}" data-layer="${lyr}" data-type="${bt.id}"></td>`;
+    });
+    tr.innerHTML += `<td class="layer-total" id="lyr${lyr}_total">0</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // Bind manual inputs — do NOT rebuild table on input, just recalc
+  tbody.querySelectorAll('.type-inp').forEach(inp => {
+    inp.addEventListener('input', () => {
+      updateLayerSubtotals();
+      recalc();
+    });
+    inp.addEventListener('change', () => {
+      updateLayerSubtotals();
+      recalc();
+    });
+  });
+}
+
+function updateLayerSubtotals() {
+  const maxLayers = Math.floor(getBoard(currentPhysical).breaks[3].y / getLayerHeight());
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    let sum = 0;
+    boxTypes.forEach(bt => {
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
+      if (inp) sum += parseInt(inp.value) || 0;
+    });
+    const totalEl = document.getElementById(`lyr${lyr}_total`);
+    if (totalEl) totalEl.textContent = sum;
+  }
+}
+
+function readManualCounts(maxLayers) {
+  const counts = [];
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    const layer = [];
+    boxTypes.forEach(bt => {
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
+      layer.push(inp ? Math.max(0, parseInt(inp.value) || 0) : 0);
+    });
+    counts.push(layer);
+  }
+  return counts;
+}
+
+function getLayerHeight() {
+  if (boxTypes.length === 0) return 40;
+  return Math.max(...boxTypes.map(bt => bt.H));
+}
+
+// ============================================================
+// Legend
+// ============================================================
+function updateLegend() {
+  const el = document.getElementById('legendRow');
+  el.innerHTML = boxTypes.map(bt => {
+    const oriLabel = (bt.ori === 'LW') ? '竖放' : '横放';
+    return `<span><span class="dot" style="background:${bt.color}"></span>箱型${boxTypes.indexOf(bt)+1} ${bt.W}×${bt.H}×${bt.L}(${oriLabel})</span>`;
+  }).join('') + `<span><span class="dot" style="background:none;border:2px solid #ff6b6b"></span><span style="color:#ff6b6b">超收边</span></span>`;
+}
+
+// ============================================================
+// Calculation
+// ============================================================
+let currentPhysical = false;
+
+function recalc() {
+  if (boxTypes.length === 0) return;
+  const usePhysical = document.getElementById('chkPhysical').checked;
+  const manual = document.getElementById('chkManual').checked;
+  const bd = getBoard(usePhysical);
+  const bw = bd.breaks[0].w, bl = bd.length, bh = bd.breaks[3].y;
+  const layerH = getLayerHeight();
+  const maxLayers = Math.floor(bh / layerH);
+
+  document.getElementById('dimLabel').textContent = (usePhysical?'物理板面':'有效装载') + ` ${bw}×${bh}×${bl}cm`;
+  const effBw = BOARD_EFF.breaks[0].w;
+  const physBw = effBw + MARGIN * 2;
+  document.getElementById('bwLabel').textContent = usePhysical ? physBw : effBw;
+
+  // For each type, compute effective footprint using its own orientation
+  const eff = boxTypes.map(bt => {
+    const ori = bt.ori || 'WL';
+    const effW = ori === 'WL' ? bt.W : bt.L;
+    const effL = ori === 'WL' ? bt.L : bt.W;
+    const nCols = Math.floor(bw / effW);
+    const nRows = Math.floor(bl / effL);
+    return { ...bt, effW, effL, nCols, nRows, maxPerLayer: nCols * nRows };
+  });
+
+  // Build table if needed (ONLY when dimensions/board/types change)
+  if (manual) {
+    document.getElementById('layerCfg').style.display = 'block';
+    if (tableNeedsBuild) {
+      buildLayerTable(eff.map(e => ({ nCols: e.nCols, nRows: e.nRows })), layerH, maxLayers, bd, usePhysical);
+      tableNeedsBuild = false;
+      // Pre-fill with reasonable defaults
+      prefillManual(eff, maxLayers, usePhysical);
+    }
+  } else {
+    document.getElementById('layerCfg').style.display = 'none';
+  }
+
+  updateLegend();
+  clearTrays();
+
+  let totalBoxes = 0, overflowCount = 0;
+
+  if (manual) {
+    const counts = readManualCounts(maxLayers);
+    // Each type occupies its own Z-band within each layer to prevent overlap.
+    // Boxes fill X-direction in columns, Z-direction in rows within the band.
+    for (let lyr = 0; lyr < maxLayers; lyr++) {
+      const yTop = (lyr + 1) * layerH;
+      const usableBw = boardW(yTop, usePhysical);
+      let curZ = 0;  // Z cursor — shared across types within this layer
+      for (let tIdx = 0; tIdx < eff.length; tIdx++) {
+        const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
+        if (cnt <= 0) continue;
+        const e = eff[tIdx];
+        const yCenter = lyr * layerH + e.H / 2;
+        const maxCols = Math.floor(usableBw / e.effW);
+        let placed = 0;
+        let maxRowUsed = 0; // track the deepest row used for precise Z advance
+        for (let col = 0; col < maxCols && placed < cnt; col++) {
+          const curX = col * e.effW;
+          const cx = curX + e.effW / 2;
+          const xR = curX + e.effW;
+          for (let row = 0; row < e.nRows && placed < cnt; row++) {
+            const absZ = curZ + row * e.effL;
+            const cz = absZ + e.effL / 2;
+            const zR = absZ + e.effL;
+            const overBoard = usableBw < xR || zR > bl;
+            addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, overBoard);
+            if (overBoard) overflowCount++; else totalBoxes++;
+            placed++;
+            if (row + 1 > maxRowUsed) maxRowUsed = row + 1;
+          }
+        }
+        curZ += maxRowUsed * e.effL; // advance Z exactly by the rows actually used
+      }
+    }
+  } else {
+    // Auto: types interleave column-by-column, shared X cursor per layer
+    for (let lyr = 0; lyr < maxLayers; lyr++) {
+      const yTop = (lyr + 1) * layerH;
+      let curX = 0;
+      let tIdx = 0;
+      const MAX_ITERS = 500;
+      for (let iter = 0; iter < MAX_ITERS && curX < bw; iter++) {
+        const e = eff[tIdx];
+        if (curX + e.effW <= bw) {
+          const cx = curX + e.effW / 2;
+          const xR = curX + e.effW;
+          const yCenter = lyr * layerH + e.H / 2;
+          const overBoard = boardW(yTop, usePhysical) < xR;
+          for (let row = 0; row < e.nRows; row++) {
+            const cz = row * e.effL + e.effL / 2;
+            addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, overBoard);
+            if (overBoard) overflowCount++; else totalBoxes++;
+          }
+          curX += e.effW;
+        }
+        tIdx = (tIdx + 1) % eff.length;
+      }
+    }
+  }
+
+  // Stats
+  document.getElementById('sTypes').textContent = boxTypes.length;
+  document.getElementById('sLayers').textContent = maxLayers;
+  document.getElementById('sTotal').textContent = totalBoxes;
+  document.getElementById('sOver').textContent = overflowCount;
+  const validEl = document.getElementById('statValid');
+  const overEl = document.getElementById('statOverflow');
+  validEl.className = 'stat valid' + (overflowCount > 0 ? '' : '');
+  overEl.className = 'stat ovr';
+  overEl.style.display = overflowCount > 0 ? '' : 'none';
+
+  renderer.render(scene, camera);
+}
+
+function prefillManual(eff, maxLayers, usePhysical) {
+  // Smart prefill: distribute across all types, proportional to their capacity.
+  // Each type gets a reasonable share so all types are visible in 3D.
+  const layerH = getLayerHeight();
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    const yTop = (lyr + 1) * layerH;
+    const bwAtLayer = boardW(yTop, usePhysical);
+    const bl = getBoard(usePhysical).length;
+    // Estimate how many types can fit in Z (each type uses roughly nRows * effL)
+    let remainingZ = bl;
+    boxTypes.forEach((bt, tIdx) => {
+      const e = eff[tIdx];
+      const maxCols = Math.floor(bwAtLayer / e.effW);
+      const maxForType = maxCols * e.nRows;
+      const zFootprint = e.nRows * e.effL;
+      // First layer: fill each type with a sensible default
+      // Later layers: leave at 0 for user to fill
+      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
+      if (inp && parseInt(inp.value) === 0) {
+        if (lyr === 0) {
+          // First layer: give each type 1 column's worth of boxes
+          inp.value = e.nRows;  // one column × nRows
+        }
+        // Other layers stay at 0
+      }
+      remainingZ -= zFootprint + 2;
+    });
+  }
+  updateLayerSubtotals();
+}
+
+// ============================================================
+// Init
+// ============================================================
+function fullRebuild() {
+  currentPhysical = document.getElementById('chkPhysical').checked;
+  const bd = getBoard(currentPhysical);
+  rebuildBoard(bd);
+  rebuildDims(bd);
+  recalc();
+}
+
+document.getElementById('chkPhysical').addEventListener('change', () => { tableNeedsBuild = true; fullRebuild(); });
+document.getElementById('chkManual').addEventListener('change', () => { tableNeedsBuild = true; recalc(); });
+
+// Init box types
+boxTypes.push(defaultType());
+renderBoxTypes();
+fullRebuild();
+
+function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera);}
+animate();
+
+window.addEventListener('resize',()=>{
+  const w=container.clientWidth,h=container.clientHeight;
+  renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
