@@ -633,26 +633,34 @@ function recalc() {
       // Sort by footprint (area) descending → big boxes first, less fragmentation
       allBoxes.sort((a, b) => (b.e.effW * b.e.effL) - (a.e.effW * b.e.effL));
 
-      // --- Shelf packing ---
-      // shelf: { z, w, depth, minBw, boxes: [{box, xInShelf}] }
-      let shelves = [];
+      // --- Shelf packing (Best-Fit) ---
+      // For each box, scan ALL shelves — pick the one with least wasted X space.
+      // This avoids First-Fit pushing small boxes into wide shelves far from center.
+      let shelves = [];  // { z, w, depth, minBw, boxes: [{box, xInShelf}] }
       for (const box of allBoxes) {
         const e = box.e;
-        let placed = false;
+        let bestSi = -1, bestRemain = Infinity;
 
-        // Try each existing shelf for remaining X space
-        for (const shelf of shelves) {
-          if (shelf.w + e.effW <= box.bw) {
-            shelf.boxes.push({ box, xInShelf: shelf.w });
-            shelf.w += e.effW;
-            shelf.depth = Math.max(shelf.depth, e.effL);
-            shelf.minBw = Math.min(shelf.minBw, box.bw);
-            placed = true;
-            break;
+        for (let si = 0; si < shelves.length; si++) {
+          const s = shelves[si];
+          const afterW = s.w + e.effW;
+          if (afterW <= box.bw) {
+            const remain = box.bw - afterW;
+            if (remain < bestRemain) {
+              bestRemain = remain;
+              bestSi = si;
+              if (remain === 0) break; // perfect fit → stop looking
+            }
           }
         }
 
-        if (!placed) {
+        if (bestSi >= 0) {
+          const s = shelves[bestSi];
+          s.boxes.push({ box, xInShelf: s.w });
+          s.w += e.effW;
+          s.depth = Math.max(s.depth, e.effL);
+          s.minBw = Math.min(s.minBw, box.bw);
+        } else {
           const zPos = shelves.length > 0
             ? shelves[shelves.length - 1].z + shelves[shelves.length - 1].depth
             : 0;
