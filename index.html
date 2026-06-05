@@ -369,7 +369,7 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
   const tbody = document.getElementById('layerTable');
   const hint = document.getElementById('layerHint');
   const limitHint = document.getElementById('layerLimitHint');
-  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 顺序填充排布`;
+  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 中心向外辐射`;
 
   if (maxLayers <= 1) {
     const maxH = Math.max(...boxTypes.map(bt => bt.H));
@@ -527,65 +527,102 @@ function recalc() {
     const counts = readManualCounts(maxLayers);
     const bh = bd.breaks[3].y, bl = bd.length;
 
-    // === Manual mode: simple greedy strip packing ===
-    // All types in a layer share the SAME X-Z space.
-    // Boxes placed sequentially: fill X first, then next Z row.
-    // No type separation, no X bands — just one continuous flow.
+    // === Manual mode: center-outward packing ===
+    // Two-pass algorithm:
+    //   Pass 1: arrange boxes into Z-rows (fill X to board edge, wrap to new row)
+    //   Pass 2: center each row on X, place rows from Z-center outward
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
       const yBase = lyr * layerH;
-      let curX = 0, curZ = 0;
-      let rowMaxL = 0;  // tallest box effL in current Z row (for advancing Z)
 
-      // Iterate types in order: 0,1,2... place all boxes of each type
+      // --- Pass 1: collect all boxes, pack into rows ---
+      let allBoxes = [];
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
         if (cnt <= 0) continue;
         const e = eff[tIdx];
-
+        const boxTop = yBase + e.H;
+        // Skip height overflows early
+        if (boxTop > bh) { overflowCount += cnt; continue; }
+        const bw = boardW(boxTop, usePhysical);
         for (let i = 0; i < cnt; i++) {
-          const boxTop = yBase + e.H;
-          const yCenter = yBase + e.H / 2;
+          allBoxes.push({ tIdx, e, bw, boxTop, yCenter: yBase + e.H / 2 });
+        }
+      }
+      if (allBoxes.length === 0) continue;
 
-          // Height overflow
-          if (boxTop > bh) {
-            overflowCount++;
-            continue;
-          }
+      // Pack into rows (greedy strip: fill X → wrap Z)
+      let rows = [];
+      let cur = { boxes: [], rowW: 0, rowMaxL: 0, rowMinBw: Infinity };
+      for (const box of allBoxes) {
+        const e = box.e;
+        if (cur.rowW + e.effW > box.bw && cur.boxes.length > 0) {
+          rows.push(cur);
+          cur = { boxes: [], rowW: 0, rowMaxL: 0, rowMinBw: Infinity };
+        }
+        cur.boxes.push(box);
+        cur.rowW += e.effW;
+        cur.rowMaxL = Math.max(cur.rowMaxL, e.effL);
+        cur.rowMinBw = Math.min(cur.rowMinBw, box.bw);
+      }
+      if (cur.boxes.length > 0) rows.push(cur);
 
-          const bw = boardW(boxTop, usePhysical);
+      // --- Pass 2: place rows from Z-center outward, X-centered ---
+      // Row Z allocation: first row straddles center, then alternate front/back
+      const zCenter = bl / 2;
+      let zFront = zCenter;  // accumulated Z going forward (toward 0)
+      let zBack = zCenter;   // accumulated Z going backward (toward bl)
 
-          // If box doesn't fit in X at current position → next Z row
-          if (curX + e.effW > bw) {
-            curX = 0;
-            curZ += rowMaxL > 0 ? rowMaxL : e.effL;
-            rowMaxL = 0;
-          }
+      // Pre-calculate Z positions for all rows
+      let rowPlacements = [];
+      for (let ri = 0; ri < rows.length; ri++) {
+        const row = rows[ri];
+        let zStart;
+        if (ri === 0) {
+          zStart = zCenter - row.rowMaxL / 2;
 
-          // Z overflow
-          if (curZ + e.effL > bl) {
-            overflowCount++;
-            addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, true);
-            continue;
-          }
+        } else if (ri % 2 === 1) {
+          // Odd row: place in front of center (toward Z=0)
+          zStart = zFront - row.rowMaxL;
+        } else {
+          // Even row: place behind center (toward Z=bl)
+          zStart = zBack;
+        }
 
-          // X-over (shouldn't happen after the row-advance above, but double-check)
-          const xR = curX + e.effW;
-          if (xR > bw) {
-            overflowCount++;
-            addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, true);
-            continue;
-          }
+        // Check Z overflow
+        const zEnd = zStart + row.rowMaxL;
+        if (zStart < 0 || zEnd > bl) {
+          // Row doesn't fit → all boxes overflow
+          for (const box of row.boxes) overflowCount++;
+          continue;
+        }
 
-          // Place box
-          addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, false);
+        rowPlacements.push({ row, zStart });
+        // Update cursors
+        if (ri === 0) {
+          zFront = zStart;
+          zBack = zEnd;
+        } else if (ri % 2 === 1) {
+          zFront = zStart;
+        } else {
+          zBack = zEnd;
+        }
+      }
+
+      // Place boxes in accepted rows
+      for (const { row, zStart } of rowPlacements) {
+        const rowBw = row.rowMinBw;
+        const xOffset = (rowBw - row.rowW) / 2;  // center the row
+
+        let xCursor = xOffset;
+        for (const box of row.boxes) {
+          const e = box.e;
+          const cx = xCursor + e.effW / 2;
+          const cz = zStart + e.effL / 2;
+
+          addBox(cx, box.yCenter, cz, e.effW, e.H, e.effL, e.color, false);
           totalBoxes++;
-
-          // Track row height
-          rowMaxL = Math.max(rowMaxL, e.effL);
-
-          // Advance X
-          curX += e.effW;
+          xCursor += e.effW;
         }
       }
     }
