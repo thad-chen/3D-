@@ -498,15 +498,13 @@ function recalc() {
   if (manual) {
     const counts = readManualCounts(maxLayers);
     const bl = getBoard(usePhysical).length;
-    const bh = bd.breaks[3].y;
 
-    // Manual placement with Z-band + auto-stack:
-    // - Each logical layer's box types flow sequentially in Z within the same height.
-    // - When Z overflows board length → auto-stack to NEXT physical layer (higher Y).
-    // - If no more physical layers available → boxes are overflow, NOT rendered.
+    // Manual placement: each logical layer = exactly one physical layer.
+    // Box types flow sequentially in Z within their layer.
+    // Z overflow → boxes are overflow (not rendered).
+    // NO cross-layer auto-stack — prevents collision between layers.
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
-      // Collect types with counts for this logical layer
       const typesInLayer = [];
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
@@ -514,30 +512,22 @@ function recalc() {
       }
       if (typesInLayer.length === 0) continue;
 
-      let physLyr = lyr;  // current physical layer
+      const yCenter = lyr * layerH + eff[typesInLayer[0].tIdx].H / 2;
+      const yTop = (lyr + 1) * layerH;
+      const usableBw = boardW(yTop, usePhysical);
       let curZ = 0;
 
       for (let ti = 0; ti < typesInLayer.length; ti++) {
         const { tIdx, cnt } = typesInLayer[ti];
         const e = eff[tIdx];
         const eZDepth = e.nRows * e.effL;
-
-        // Auto-stack: if Z-band doesn't fit in remaining Z space → next layer
-        if (curZ + eZDepth > bl) {
-          physLyr++;
-          curZ = 0;
-        }
-
-        // No more layers to stack into → all remaining boxes are overflow
-        if (physLyr >= maxLayers) {
-          overflowCount += cnt;
-          continue; // skip rendering — don't place boxes outside the board
-        }
-
-        const yCenter = physLyr * layerH + e.H / 2;
-        const yTop = (physLyr + 1) * layerH;
-        const usableBw = boardW(yTop, usePhysical);
         const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
+
+        // If Z-band doesn't fit in remaining board length → this type overflows
+        if (curZ + eZDepth > bl) {
+          overflowCount += cnt;
+          continue; // skip — too much Z, no cross-layer auto-stack
+        }
 
         let placed = 0, maxRowUsed = 0;
         for (let col = 0; col < maxCols && placed < cnt; col++) {
