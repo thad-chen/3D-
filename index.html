@@ -527,15 +527,16 @@ function recalc() {
     const counts = readManualCounts(maxLayers);
     const bh = bd.breaks[3].y, bl = bd.length;
 
-    // === Manual mode: smart auto-layout ===
-    // For each layer, types flow in Z order.
-    // Each type gets: maxCols based on board width at boxTop,
-    //                 maxRows based on REMAINING Z space (not full board).
-    // This is the key fix — no more assuming full board length.
+    // === Manual mode: types stack HORIZONTALLY in X, each uses full Z ===
+    // Different box types sit side-by-side on the board (along X), 
+    // each using its own Z rows independently (no Z interference between types).
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
       const yBase = lyr * layerH;
-      let curZ = 0;  // Z cursor, advances per type
+      const yLayerTop = yBase + layerH;
+      // Shared board width at layer top (fallback for X allocation)
+      const fullBw = boardW(Math.min(yLayerTop, bh), usePhysical);
+      let xOffset = 0;  // X cursor — types sit side-by-side
 
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
@@ -551,13 +552,14 @@ function recalc() {
           continue;
         }
 
-        // Columns: board width at this height
+        // Board width at this box type's own height
         const usableBw = boardW(boxTop, usePhysical);
-        const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
+        // Available X space from current offset
+        const availX = Math.max(0, usableBw - xOffset);
+        const maxCols = availX > 0 ? Math.floor(availX / e.effW) : 0;
 
-        // Rows: ONLY the remaining Z space, not the full board
-        const remainingZ = bl - curZ;
-        const maxRows = Math.min(e.nRows, Math.max(1, Math.floor(remainingZ / e.effL)));
+        // Each type uses the FULL board length for its Z rows (independent)
+        const maxRows = Math.floor(bl / e.effL);
         const capacity = maxCols * maxRows;
 
         const fit = Math.min(cnt, capacity);
@@ -565,13 +567,13 @@ function recalc() {
 
         let placed = 0;
         for (let col = 0; col < maxCols && placed < fit; col++) {
-          const curX = col * e.effW;
+          const curX = xOffset + col * e.effW;
           const cx = curX + e.effW / 2;
-          const xR = (col + 1) * e.effW;
-          const xOverflow = xR > usableBw;
+          const xR = curX + e.effW;
+          const xOverflow = xR > usableBw || curX >= usableBw;
 
           for (let row = 0; row < maxRows && placed < fit; row++) {
-            const absZ = curZ + row * e.effL;
+            const absZ = row * e.effL;
             const cz = absZ + e.effL / 2;
             const zR = absZ + e.effL;
             const zOverflow = zR > bl;
@@ -587,7 +589,8 @@ function recalc() {
           }
         }
         overflowCount += over;
-        curZ += maxRows * e.effL;
+        // Advance X offset for next type
+        xOffset += maxCols * e.effW;
       }
     }
   } else {
