@@ -605,22 +605,23 @@ function recalc() {
       cumH += layerHeights[lyr];
     }
 
-    // === Manual mode: center-outward packing ===
-    // Two-pass algorithm:
-    //   Pass 1: arrange boxes into Z-rows (fill X to board edge, wrap to new row)
-    //   Pass 2: center each row on X, place rows from Z-center outward
+    // === Manual mode: shelf packing + center on board ===
+    // Algorithm:
+    //   1. Sort boxes by footprint descending (largest first = better utilization)
+    //   2. Shelf packing: each shelf fills X → wrap to next shelf in Z
+    //   3. After all shelves packed, center the entire block on the board
+    //   4. Per-box boardWidth (different heights see different widths)
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
       const yBase = layerYBase[lyr];
 
-      // --- Pass 1: collect all boxes, pack into rows ---
+      // --- Collect all boxes ---
       let allBoxes = [];
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
         if (cnt <= 0) continue;
         const e = eff[tIdx];
         const boxTop = yBase + e.H;
-        // Skip height overflows early
         if (boxTop > bh) { overflowCount += cnt; continue; }
         const bw = boardW(boxTop, usePhysical);
         for (let i = 0; i < cnt; i++) {
@@ -629,78 +630,71 @@ function recalc() {
       }
       if (allBoxes.length === 0) continue;
 
-      // Pack into rows (greedy strip: fill X → wrap Z)
-      let rows = [];
-      let cur = { boxes: [], rowW: 0, rowMaxL: 0, rowMinBw: Infinity };
+      // Sort by footprint (area) descending → big boxes first, less fragmentation
+      allBoxes.sort((a, b) => (b.e.effW * b.e.effL) - (a.e.effW * b.e.effL));
+
+      // --- Shelf packing ---
+      // shelf: { z, w, depth, minBw, boxes: [{box, xInShelf}] }
+      let shelves = [];
       for (const box of allBoxes) {
         const e = box.e;
-        if (cur.rowW + e.effW > box.bw && cur.boxes.length > 0) {
-          rows.push(cur);
-          cur = { boxes: [], rowW: 0, rowMaxL: 0, rowMinBw: Infinity };
-        }
-        cur.boxes.push(box);
-        cur.rowW += e.effW;
-        cur.rowMaxL = Math.max(cur.rowMaxL, e.effL);
-        cur.rowMinBw = Math.min(cur.rowMinBw, box.bw);
-      }
-      if (cur.boxes.length > 0) rows.push(cur);
+        let placed = false;
 
-      // --- Pass 2: place rows from Z-center outward, X-centered ---
-      // Row Z allocation: first row straddles center, then alternate front/back
-      const zCenter = bl / 2;
-      let zFront = zCenter;  // accumulated Z going forward (toward 0)
-      let zBack = zCenter;   // accumulated Z going backward (toward bl)
-
-      // Pre-calculate Z positions for all rows
-      let rowPlacements = [];
-      for (let ri = 0; ri < rows.length; ri++) {
-        const row = rows[ri];
-        let zStart;
-        if (ri === 0) {
-          zStart = zCenter - row.rowMaxL / 2;
-
-        } else if (ri % 2 === 1) {
-          // Odd row: place in front of center (toward Z=0)
-          zStart = zFront - row.rowMaxL;
-        } else {
-          // Even row: place behind center (toward Z=bl)
-          zStart = zBack;
+        // Try each existing shelf for remaining X space
+        for (const shelf of shelves) {
+          if (shelf.w + e.effW <= box.bw) {
+            shelf.boxes.push({ box, xInShelf: shelf.w });
+            shelf.w += e.effW;
+            shelf.depth = Math.max(shelf.depth, e.effL);
+            shelf.minBw = Math.min(shelf.minBw, box.bw);
+            placed = true;
+            break;
+          }
         }
 
-        // Check Z overflow
-        const zEnd = zStart + row.rowMaxL;
-        if (zStart < 0 || zEnd > bl) {
-          // Row doesn't fit → all boxes overflow
-          for (const box of row.boxes) overflowCount++;
-          continue;
-        }
-
-        rowPlacements.push({ row, zStart });
-        // Update cursors
-        if (ri === 0) {
-          zFront = zStart;
-          zBack = zEnd;
-        } else if (ri % 2 === 1) {
-          zFront = zStart;
-        } else {
-          zBack = zEnd;
+        if (!placed) {
+          const zPos = shelves.length > 0
+            ? shelves[shelves.length - 1].z + shelves[shelves.length - 1].depth
+            : 0;
+          shelves.push({
+            z: zPos,
+            w: e.effW,
+            depth: e.effL,
+            minBw: box.bw,
+            boxes: [{ box, xInShelf: 0 }]
+          });
         }
       }
 
-      // Place boxes in accepted rows
-      for (const { row, zStart } of rowPlacements) {
-        const rowBw = row.rowMinBw;
-        const xOffset = (rowBw - row.rowW) / 2;  // center the row
+      // --- Compute block dimensions ---
+      let totalZ = 0, maxShelfW = 0, blockMinBw = Infinity;
+      for (const s of shelves) {
+        totalZ = Math.max(totalZ, s.z + s.depth);
+        maxShelfW = Math.max(maxShelfW, s.w);
+        blockMinBw = Math.min(blockMinBw, s.minBw);
+      }
+      if (blockMinBw === Infinity) blockMinBw = bd.breaks[0].w;
 
-        let xCursor = xOffset;
-        for (const box of row.boxes) {
+      // --- Check Z overflow ---
+      if (totalZ > bl) {
+        for (const s of shelves) {
+          for (const item of s.boxes) overflowCount++;
+        }
+        continue;
+      }
+
+      // --- Center entire block on board ---
+      const xBlockOffset = (blockMinBw - maxShelfW) / 2;
+      const zBlockOffset = (bl - totalZ) / 2;
+
+      // --- Place all boxes ---
+      for (const shelf of shelves) {
+        for (const { box, xInShelf } of shelf.boxes) {
           const e = box.e;
-          const cx = xCursor + e.effW / 2;
-          const cz = zStart + e.effL / 2;
-
+          const cx = xBlockOffset + xInShelf + e.effW / 2;
+          const cz = zBlockOffset + shelf.z + e.effL / 2;
           addBox(cx, box.yCenter, cz, e.effW, e.H, e.effL, e.color, false);
           totalBoxes++;
-          xCursor += e.effW;
         }
       }
     }
