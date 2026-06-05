@@ -425,7 +425,10 @@ function buildLayerTable(nColsArr, layerH, maxLayers, bd, usePhysical) {
 }
 
 function updateLayerSubtotals() {
-  const maxLayers = Math.floor(getBoard(currentPhysical).breaks[3].y / getLayerHeight());
+  const bh = getBoard(currentPhysical).breaks[3].y;
+  const autoMaxLayers = Math.max(1, Math.floor(bh / getLayerHeight()));
+  const manualLayerCount = parseInt(document.getElementById('inpLayerCount').value) || 0;
+  const maxLayers = (manualLayerCount > 0) ? manualLayerCount : autoMaxLayers;
   for (let lyr = 0; lyr < maxLayers; lyr++) {
     let sum = 0;
     boxTypes.forEach(bt => {
@@ -535,8 +538,6 @@ function recalc() {
       if (typesInLayer.length === 0) continue;
 
       const yBase = lyr * layerH;  // bottom of this layer
-      const yLayerTop = yBase + layerH;
-      const usableBw = boardW(yLayerTop, usePhysical);
       let curZ = 0;
 
       for (let ti = 0; ti < typesInLayer.length; ti++) {
@@ -546,6 +547,8 @@ function recalc() {
         const boxTop = yBase + e.H;         // actual box top
         const heightOver = boxTop > bh;     // height overflow (box protrudes above board)
 
+        // Use each box type's OWN boxTop for width check — not the logical layer top
+        const usableBw = heightOver ? 0 : boardW(boxTop, usePhysical);
         const eZDepth = e.nRows * e.effL;
         const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
 
