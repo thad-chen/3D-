@@ -633,11 +633,12 @@ function recalc() {
       allBoxes.sort((a, b) => (b.e.effW * b.e.effL) - (a.e.effW * b.e.effL));
 
       // --- MaxRects BSSF ---
-      // freeRects: [{x, z, w, l}] — unoccupied rectangles in board coords
-      // When a box needs bw narrower than the rect, we only use the portion
-      // within its bw constraint.
-      // Use MAX bw — short boxes see more board width. Tall boxes are
-      // already self-limited in placement via availW = min(r.w, box.bw - r.x).
+      // freeRects: [{x, z, w, l}] — unoccupied rectangles.
+      // Packing is done in intermediate coordinates (re-centered later).
+      // bw constraint is applied as a cap: box cannot use more than its
+      // visible board width, but the x-offset within the intermediate
+      // coordinate system is irrelevant here.
+      // Use MAX bw — short boxes see more board width.
       const layerMaxBw = Math.max(...allBoxes.map(b => b.bw));
       let freeRects = [{ x: 0, z: 0, w: layerMaxBw, l: bl }];
       let placements = [];  // [{box, x, z}]
@@ -648,8 +649,8 @@ function recalc() {
 
         for (let ri = 0; ri < freeRects.length; ri++) {
           const r = freeRects[ri];
-          // Clamp: box can't use width beyond its own bw
-          const availW = Math.min(r.w, box.bw - r.x);
+          // availW = min(rect width, box's own board-width cap)
+          const availW = Math.min(r.w, box.bw);
           if (availW < e.effW || r.l < e.effL) continue;
 
           const scoreW = availW - e.effW;
@@ -714,9 +715,16 @@ function recalc() {
       const xOff = (layerMaxBw - blockW) / 2 - pMinX;
       const zOff = (bl - blockL) / 2 - pMinZ;
 
+      // --- Post-centering validation + render ---
       for (const { box, x, z } of placements) {
         const e = box.e;
-        addBox(x + xOff + e.effW / 2, box.yCenter, z + zOff + e.effL / 2,
+        const finalX = x + xOff;
+        const finalZ = z + zOff;
+        if (finalX < 0 || finalX + e.effW > box.bw || finalZ < 0 || finalZ + e.effL > bl) {
+          overflowCount++;
+          continue;
+        }
+        addBox(finalX + e.effW / 2, box.yCenter, finalZ + e.effL / 2,
                e.effW, e.H, e.effL, e.color, false);
         totalBoxes++;
       }
