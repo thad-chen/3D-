@@ -364,12 +364,30 @@ document.getElementById('btnAddType').addEventListener('click', () => {
 // ============================================================
 // Manual table
 // ============================================================
-function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
+function buildLayerTable(eff, maxLayers, bd, usePhysical) {
   const thead = document.getElementById('layerHead');
   const tbody = document.getElementById('layerTable');
   const hint = document.getElementById('layerHint');
   const limitHint = document.getElementById('layerLimitHint');
-  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 中心向外辐射`;
+
+  // Read current counts to compute actual stacking heights
+  const counts = readManualCounts(maxLayers);
+  const lyrHeights = [];
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    let maxH = 0;
+    for (let tIdx = 0; tIdx < eff.length; tIdx++) {
+      if (counts[lyr][tIdx] > 0) maxH = Math.max(maxH, eff[tIdx].H);
+    }
+    lyrHeights.push(maxH);
+  }
+  // cumulative yBase: each layer sits on top of previous layers' actual heights
+  const lyrYBase = [];
+  let cumH = 0;
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    lyrYBase.push(cumH);
+    cumH += lyrHeights[lyr];
+  }
+  hint.textContent = `共${maxLayers}层 · 实际堆叠高度 · 中心向外辐射`;
 
   if (maxLayers <= 1) {
     const maxH = Math.max(...boxTypes.map(bt => bt.H));
@@ -398,11 +416,12 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
 
   tbody.innerHTML = '';
   for (let lyr = 0; lyr < maxLayers; lyr++) {
-    const yBot = lyr * layerH;
-    const yTop = yBot + layerH;
+    const yBot = lyrYBase[lyr];
+    const yTop = yBot + lyrHeights[lyr];
+    const hDisplay = lyrHeights[lyr] > 0 ? `${yBot}-${yTop}` : '---';
 
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${yBot}-${yTop}</td>`;
+    tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${hDisplay}</td>`;
     boxTypes.forEach((bt, tIdx) => {
       const savedCnt = saved[`${lyr}_${bt.id}`] || 0;
       const e = eff[tIdx];
@@ -441,6 +460,45 @@ function updateLayerSubtotals() {
     const totalEl = document.getElementById(`lyr${lyr}_total`);
     if (totalEl) totalEl.textContent = sum;
   }
+}
+
+function updateLayerHeightDisplay(eff, maxLayers, bd, usePhysical) {
+  const counts = readManualCounts(maxLayers);
+  const lyrHeights = [];
+  for (let lyr = 0; lyr < maxLayers; lyr++) {
+    let maxH = 0;
+    for (let tIdx = 0; tIdx < eff.length; tIdx++) {
+      if (counts[lyr][tIdx] > 0) maxH = Math.max(maxH, eff[tIdx].H);
+    }
+    lyrHeights.push(maxH);
+  }
+  const rows = document.querySelectorAll('#layerTable tr');
+  let cumH = 0;
+  rows.forEach((row, lyr) => {
+    if (lyr >= maxLayers) return;
+    const yBot = cumH;
+    const yTop = yBot + lyrHeights[lyr];
+    cumH = yTop;
+    const hCell = row.querySelector('td.layer-h');
+    if (hCell) {
+      hCell.textContent = lyrHeights[lyr] > 0 ? `${yBot}-${yTop}` : '---';
+    }
+    // Update grid hints
+    row.querySelectorAll('.type-inp').forEach(inp => {
+      const btId = parseInt(inp.dataset.type);
+      const tIdx = boxTypes.findIndex(bt => bt.id === btId);
+      if (tIdx < 0) return;
+      const e = eff[tIdx];
+      const boxTop = yBot + e.H;
+      const autoBw = boxTop > bd.breaks[3].y ? 0 : boardW(boxTop, usePhysical);
+      const autoCols = autoBw > 0 ? Math.floor(autoBw / e.effW) : 0;
+      const autoRows = Math.floor(bd.length / e.effL);
+      const gridSpan = inp.parentElement.querySelector('.layer-grid');
+      if (gridSpan) {
+        gridSpan.textContent = `板宽${autoBw}cm 可${autoCols}×${autoRows}`;
+      }
+    });
+  });
 }
 
 function readManualCounts(maxLayers) {
@@ -510,8 +568,11 @@ function recalc() {
     document.getElementById('layerCfg').style.display = 'block';
     document.getElementById('manualLayerCountRow').style.display = 'flex';
     if (tableNeedsBuild) {
-      buildLayerTable(eff, layerH, maxLayers, bd, usePhysical);
+      buildLayerTable(eff, maxLayers, bd, usePhysical);
       tableNeedsBuild = false;
+    } else {
+      // Refresh height display and grid hints when counts change
+      updateLayerHeightDisplay(eff, maxLayers, bd, usePhysical);
     }
   } else {
     document.getElementById('layerCfg').style.display = 'none';
@@ -527,13 +588,30 @@ function recalc() {
     const counts = readManualCounts(maxLayers);
     const bh = bd.breaks[3].y, bl = bd.length;
 
+    // === Compute actual stacking heights per layer ===
+    // Each layer's yBase = cumulative height of all previous layers
+    const layerHeights = [];
+    for (let lyr = 0; lyr < maxLayers; lyr++) {
+      let maxH = 0;
+      for (let tIdx = 0; tIdx < eff.length; tIdx++) {
+        if (counts[lyr][tIdx] > 0) maxH = Math.max(maxH, eff[tIdx].H);
+      }
+      layerHeights.push(maxH);
+    }
+    const layerYBase = [];
+    let cumH = 0;
+    for (let lyr = 0; lyr < maxLayers; lyr++) {
+      layerYBase.push(cumH);
+      cumH += layerHeights[lyr];
+    }
+
     // === Manual mode: center-outward packing ===
     // Two-pass algorithm:
     //   Pass 1: arrange boxes into Z-rows (fill X to board edge, wrap to new row)
     //   Pass 2: center each row on X, place rows from Z-center outward
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
-      const yBase = lyr * layerH;
+      const yBase = layerYBase[lyr];
 
       // --- Pass 1: collect all boxes, pack into rows ---
       let allBoxes = [];
