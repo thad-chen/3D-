@@ -495,8 +495,7 @@ function recalc() {
     if (tableNeedsBuild) {
       buildLayerTable(eff.map(e => ({ nCols: e.nCols, nRows: e.nRows })), layerH, maxLayers, bd, usePhysical);
       tableNeedsBuild = false;
-      // Pre-fill with reasonable defaults
-      prefillManual(eff, maxLayers, usePhysical);
+      // No auto-prefill — user controls quantities manually
     }
   } else {
     document.getElementById('layerCfg').style.display = 'none';
@@ -509,20 +508,38 @@ function recalc() {
 
   if (manual) {
     const counts = readManualCounts(maxLayers);
-    // Each type occupies its own Z-band within each layer to prevent overlap.
-    // Boxes fill X-direction in columns, Z-direction in rows within the band.
+    const maxPhysLayers = maxLayers * 2; // allow overflow stacking up to double
+    // Manual placement with Z-band + auto-stack when board length overflows.
+    // Each logical layer's box types flow into physical layers as Z fills up.
+    const bl = getBoard(usePhysical).length;
     for (let lyr = 0; lyr < maxLayers; lyr++) {
-      const yTop = (lyr + 1) * layerH;
-      const usableBw = boardW(yTop, usePhysical);
-      let curZ = 0;  // Z cursor — shared across types within this layer
+      // Collect all box-type counts for this logical layer
+      const typesInLayer = [];
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
-        if (cnt <= 0) continue;
+        if (cnt > 0) typesInLayer.push({ tIdx, cnt });
+      }
+      if (typesInLayer.length === 0) continue;
+
+      let physLyr = lyr;  // start physical layer = logical layer
+      let curZ = 0;       // Z cursor within current physical layer
+      for (let ti = 0; ti < typesInLayer.length; ti++) {
+        const { tIdx, cnt } = typesInLayer[ti];
         const e = eff[tIdx];
-        const yCenter = lyr * layerH + e.H / 2;
+        const eZDepth = e.nRows * e.effL;
+        // If this type's Z-band doesn't fit in current physical layer → next layer
+        if (curZ > 0 && curZ + eZDepth > bl) {
+          physLyr++;
+          curZ = 0;
+        }
+        if (physLyr >= maxPhysLayers) break;
+
+        const yTop = (physLyr + 1) * layerH;
+        const usableBw = boardW(yTop, usePhysical);
+        const yCenter = physLyr * layerH + e.H / 2;
         const maxCols = Math.floor(usableBw / e.effW);
         let placed = 0;
-        let maxRowUsed = 0; // track the deepest row used for precise Z advance
+        let maxRowUsed = 0;
         for (let col = 0; col < maxCols && placed < cnt; col++) {
           const curX = col * e.effW;
           const cx = curX + e.effW / 2;
@@ -538,7 +555,7 @@ function recalc() {
             if (row + 1 > maxRowUsed) maxRowUsed = row + 1;
           }
         }
-        curZ += maxRowUsed * e.effL; // advance Z exactly by the rows actually used
+        curZ += maxRowUsed * e.effL;
       }
     }
   } else {
