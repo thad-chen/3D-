@@ -547,22 +547,17 @@ function recalc() {
         const boxTop = yBase + e.H;         // actual box top
         const heightOver = boxTop > bh;     // height overflow (box protrudes above board)
 
-        // Use each box type's OWN boxTop for width check — not the logical layer top
-        const usableBw = heightOver ? 0 : boardW(boxTop, usePhysical);
-        const eZDepth = e.nRows * e.effL;
-        const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
-
-        // If Z-band doesn't fit in remaining board length → this type overflows
-        if (!heightOver && curZ + eZDepth > bl) {
-          overflowCount += cnt;
-          continue;
-        }
         // If box is taller than board → all boxes of this type overflow
         if (heightOver) {
           overflowCount += cnt;
           continue;
         }
 
+        // Use each box type's OWN boxTop for width check — not the logical layer top
+        const usableBw = boardW(boxTop, usePhysical);
+        const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
+
+        // Place boxes one by one — individual overflow detection, NOT batch pre-check
         let placed = 0, maxRowUsed = 0;
         for (let col = 0; col < maxCols && placed < cnt; col++) {
           const curX = col * e.effW;
@@ -582,11 +577,12 @@ function recalc() {
             } else {
               addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, false);
               totalBoxes++;
+              if (row + 1 > maxRowUsed) maxRowUsed = row + 1;
             }
             placed++;
-            if (row + 1 > maxRowUsed) maxRowUsed = row + 1;
           }
         }
+        // Only advance curZ by rows that actually had valid boxes placed
         curZ += maxRowUsed * e.effL;
       }
     }
