@@ -378,28 +378,17 @@ function buildLayerTable(nColsArr, layerH, maxLayers, bd, usePhysical) {
   boxTypes.forEach((bt, i) => { thead.innerHTML += `<th style="color:${bt.color}">箱${i+1}<br><span style="font-size:7px;color:#556;">Z区${i+1}</span></th>`; });
   thead.innerHTML += '<th>合计</th></tr>';
 
-  // Preserve existing user edits before clearing
-  const saved = {};
-  boxTypes.forEach(bt => {
-    for (let lyr = 0; lyr < maxLayers; lyr++) {
-      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
-      if (inp) saved[`${lyr}_${bt.id}`] = inp.value;
-    }
-  });
-
+  // Clear and rebuild — always start fresh (no carry-over)
   tbody.innerHTML = '';
   for (let lyr = 0; lyr < maxLayers; lyr++) {
     const yBot = lyr * layerH;
     const yTop = yBot + layerH;
-    const bW = boardW(yTop, usePhysical);
 
     const tr = document.createElement('tr');
     tr.innerHTML = `<td style="font-size:10px;color:#e94560;font-weight:bold;">L${lyr+1}</td><td class="layer-h">${yBot}-${yTop}</td>`;
     boxTypes.forEach((bt, i) => {
       const inId = `lyr${lyr}_t${bt.id}`;
-      const savedVal = saved[`${lyr}_${bt.id}`];
-      const val = savedVal !== undefined ? savedVal : 0;
-      tr.innerHTML += `<td><input type="number" class="type-inp" id="${inId}" min="0" step="1" value="${val}" data-layer="${lyr}" data-type="${bt.id}"></td>`;
+      tr.innerHTML += `<td><input type="number" class="type-inp" id="${inId}" min="0" step="1" value="0" data-layer="${lyr}" data-type="${bt.id}"></td>`;
     });
     tr.innerHTML += `<td class="layer-total" id="lyr${lyr}_total">0</td>`;
     tbody.appendChild(tr);
@@ -508,12 +497,16 @@ function recalc() {
 
   if (manual) {
     const counts = readManualCounts(maxLayers);
-    const maxPhysLayers = maxLayers * 2; // allow overflow stacking up to double
-    // Manual placement with Z-band + auto-stack when board length overflows.
-    // Each logical layer's box types flow into physical layers as Z fills up.
     const bl = getBoard(usePhysical).length;
+    const bh = bd.breaks[3].y;
+
+    // Manual placement with Z-band + auto-stack:
+    // - Each logical layer's box types flow sequentially in Z within the same height.
+    // - When Z overflows board length → auto-stack to NEXT physical layer (higher Y).
+    // - If no more physical layers available → boxes are overflow, NOT rendered.
+    
     for (let lyr = 0; lyr < maxLayers; lyr++) {
-      // Collect all box-type counts for this logical layer
+      // Collect types with counts for this logical layer
       const typesInLayer = [];
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
@@ -521,36 +514,51 @@ function recalc() {
       }
       if (typesInLayer.length === 0) continue;
 
-      let physLyr = lyr;  // start physical layer = logical layer
-      let curZ = 0;       // Z cursor within current physical layer
+      let physLyr = lyr;  // current physical layer
+      let curZ = 0;
+
       for (let ti = 0; ti < typesInLayer.length; ti++) {
         const { tIdx, cnt } = typesInLayer[ti];
         const e = eff[tIdx];
         const eZDepth = e.nRows * e.effL;
-        // If this type's Z-band doesn't fit in current physical layer → next layer
-        if (curZ > 0 && curZ + eZDepth > bl) {
+
+        // Auto-stack: if Z-band doesn't fit in remaining Z space → next layer
+        if (curZ + eZDepth > bl) {
           physLyr++;
           curZ = 0;
         }
-        if (physLyr >= maxPhysLayers) break;
 
+        // No more layers to stack into → all remaining boxes are overflow
+        if (physLyr >= maxLayers) {
+          overflowCount += cnt;
+          continue; // skip rendering — don't place boxes outside the board
+        }
+
+        const yCenter = physLyr * layerH + e.H / 2;
         const yTop = (physLyr + 1) * layerH;
         const usableBw = boardW(yTop, usePhysical);
-        const yCenter = physLyr * layerH + e.H / 2;
-        const maxCols = Math.floor(usableBw / e.effW);
-        let placed = 0;
-        let maxRowUsed = 0;
+        const maxCols = usableBw > 0 ? Math.floor(usableBw / e.effW) : 0;
+
+        let placed = 0, maxRowUsed = 0;
         for (let col = 0; col < maxCols && placed < cnt; col++) {
           const curX = col * e.effW;
           const cx = curX + e.effW / 2;
           const xR = curX + e.effW;
+          const xOverflow = usableBw < xR;
+
           for (let row = 0; row < e.nRows && placed < cnt; row++) {
             const absZ = curZ + row * e.effL;
             const cz = absZ + e.effL / 2;
             const zR = absZ + e.effL;
-            const overBoard = usableBw < xR || zR > bl;
-            addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, overBoard);
-            if (overBoard) overflowCount++; else totalBoxes++;
+            const zOverflow = zR > bl;
+
+            if (xOverflow || zOverflow) {
+              overflowCount++;
+              addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, true);
+            } else {
+              addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, false);
+              totalBoxes++;
+            }
             placed++;
             if (row + 1 > maxRowUsed) maxRowUsed = row + 1;
           }
@@ -596,37 +604,6 @@ function recalc() {
   overEl.style.display = overflowCount > 0 ? '' : 'none';
 
   renderer.render(scene, camera);
-}
-
-function prefillManual(eff, maxLayers, usePhysical) {
-  // Smart prefill: distribute across all types, proportional to their capacity.
-  // Each type gets a reasonable share so all types are visible in 3D.
-  const layerH = getLayerHeight();
-  for (let lyr = 0; lyr < maxLayers; lyr++) {
-    const yTop = (lyr + 1) * layerH;
-    const bwAtLayer = boardW(yTop, usePhysical);
-    const bl = getBoard(usePhysical).length;
-    // Estimate how many types can fit in Z (each type uses roughly nRows * effL)
-    let remainingZ = bl;
-    boxTypes.forEach((bt, tIdx) => {
-      const e = eff[tIdx];
-      const maxCols = Math.floor(bwAtLayer / e.effW);
-      const maxForType = maxCols * e.nRows;
-      const zFootprint = e.nRows * e.effL;
-      // First layer: fill each type with a sensible default
-      // Later layers: leave at 0 for user to fill
-      const inp = document.getElementById(`lyr${lyr}_t${bt.id}`);
-      if (inp && parseInt(inp.value) === 0) {
-        if (lyr === 0) {
-          // First layer: give each type 1 column's worth of boxes
-          inp.value = e.nRows;  // one column × nRows
-        }
-        // Other layers stay at 0
-      }
-      remainingZ -= zFootprint + 2;
-    });
-  }
-  updateLayerSubtotals();
 }
 
 // ============================================================
