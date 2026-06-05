@@ -589,8 +589,9 @@ function recalc() {
           }
         }
         overflowCount += over;
-        // Advance X offset for next type
-        xOffset += maxCols * e.effW;
+        // Advance X offset only by columns ACTUALLY used (not maxCols)
+        const colsUsed = maxRows > 0 ? Math.ceil(fit / maxRows) : 0;
+        xOffset += colsUsed * e.effW;
       }
     }
   } else {
