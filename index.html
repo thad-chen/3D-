@@ -369,7 +369,7 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
   const tbody = document.getElementById('layerTable');
   const hint = document.getElementById('layerHint');
   const limitHint = document.getElementById('layerLimitHint');
-  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 输入件数自动排布`;
+  hint.textContent = `共${maxLayers}层 · 层高${layerH}cm · 顺序填充排布`;
 
   if (maxLayers <= 1) {
     const maxH = Math.max(...boxTypes.map(bt => bt.H));
@@ -412,7 +412,7 @@ function buildLayerTable(eff, layerH, maxLayers, bd, usePhysical) {
       const autoRows = Math.floor(bd.length / e.effL);
       tr.innerHTML += `<td>
         <input type="number" class="type-inp" id="lyr${lyr}_t${bt.id}" value="${savedCnt}" data-layer="${lyr}" data-type="${bt.id}" min="0" step="1">
-        <span class="layer-grid">${autoCols}列×${autoRows}行</span>
+        <span class="layer-grid">板宽${autoBw}cm 可${autoCols}×${autoRows}</span>
       </td>`;
     });
     tr.innerHTML += `<td class="layer-total" id="lyr${lyr}_total">0</td>`;
@@ -527,71 +527,66 @@ function recalc() {
     const counts = readManualCounts(maxLayers);
     const bh = bd.breaks[3].y, bl = bd.length;
 
-    // === Manual mode: types stack HORIZONTALLY in X, each uses full Z ===
-    // Different box types sit side-by-side on the board (along X), 
-    // each using its own Z rows independently (no Z interference between types).
+    // === Manual mode: simple greedy strip packing ===
+    // All types in a layer share the SAME X-Z space.
+    // Boxes placed sequentially: fill X first, then next Z row.
+    // No type separation, no X bands — just one continuous flow.
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
       const yBase = lyr * layerH;
-      const yLayerTop = yBase + layerH;
-      // Shared board width at layer top (fallback for X allocation)
-      const fullBw = boardW(Math.min(yLayerTop, bh), usePhysical);
-      let xOffset = 0;  // X cursor — types sit side-by-side
+      let curX = 0, curZ = 0;
+      let rowMaxL = 0;  // tallest box effL in current Z row (for advancing Z)
 
+      // Iterate types in order: 0,1,2... place all boxes of each type
       for (let tIdx = 0; tIdx < eff.length; tIdx++) {
         const cnt = counts[lyr] ? counts[lyr][tIdx] : 0;
         if (cnt <= 0) continue;
-
         const e = eff[tIdx];
-        const boxTop = yBase + e.H;
-        const yCenter = yBase + e.H / 2;
 
-        // Height overflow → all boxes overflow
-        if (boxTop > bh) {
-          overflowCount += cnt;
-          continue;
-        }
+        for (let i = 0; i < cnt; i++) {
+          const boxTop = yBase + e.H;
+          const yCenter = yBase + e.H / 2;
 
-        // Board width at this box type's own height
-        const usableBw = boardW(boxTop, usePhysical);
-        // Available X space from current offset
-        const availX = Math.max(0, usableBw - xOffset);
-        const maxCols = availX > 0 ? Math.floor(availX / e.effW) : 0;
-
-        // Each type uses the FULL board length for its Z rows (independent)
-        const maxRows = Math.floor(bl / e.effL);
-        const capacity = maxCols * maxRows;
-
-        const fit = Math.min(cnt, capacity);
-        const over = cnt - fit;
-
-        let placed = 0;
-        for (let col = 0; col < maxCols && placed < fit; col++) {
-          const curX = xOffset + col * e.effW;
-          const cx = curX + e.effW / 2;
-          const xR = curX + e.effW;
-          const xOverflow = xR > usableBw || curX >= usableBw;
-
-          for (let row = 0; row < maxRows && placed < fit; row++) {
-            const absZ = row * e.effL;
-            const cz = absZ + e.effL / 2;
-            const zR = absZ + e.effL;
-            const zOverflow = zR > bl;
-
-            if (xOverflow || zOverflow) {
-              overflowCount++;
-              addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, true);
-            } else {
-              addBox(cx, yCenter, cz, e.effW, e.H, e.effL, e.color, false);
-              totalBoxes++;
-            }
-            placed++;
+          // Height overflow
+          if (boxTop > bh) {
+            overflowCount++;
+            continue;
           }
+
+          const bw = boardW(boxTop, usePhysical);
+
+          // If box doesn't fit in X at current position → next Z row
+          if (curX + e.effW > bw) {
+            curX = 0;
+            curZ += rowMaxL > 0 ? rowMaxL : e.effL;
+            rowMaxL = 0;
+          }
+
+          // Z overflow
+          if (curZ + e.effL > bl) {
+            overflowCount++;
+            addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, true);
+            continue;
+          }
+
+          // X-over (shouldn't happen after the row-advance above, but double-check)
+          const xR = curX + e.effW;
+          if (xR > bw) {
+            overflowCount++;
+            addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, true);
+            continue;
+          }
+
+          // Place box
+          addBox(curX + e.effW/2, yCenter, curZ + e.effL/2, e.effW, e.H, e.effL, e.color, false);
+          totalBoxes++;
+
+          // Track row height
+          rowMaxL = Math.max(rowMaxL, e.effL);
+
+          // Advance X
+          curX += e.effW;
         }
-        overflowCount += over;
-        // Advance X offset only by columns ACTUALLY used (not maxCols)
-        const colsUsed = maxRows > 0 ? Math.ceil(fit / maxRows) : 0;
-        xOffset += colsUsed * e.effW;
       }
     }
   } else {
