@@ -636,8 +636,10 @@ function recalc() {
       // freeRects: [{x, z, w, l}] — unoccupied rectangles in board coords
       // When a box needs bw narrower than the rect, we only use the portion
       // within its bw constraint.
-      const layerMinBw = Math.min(...allBoxes.map(b => b.bw));
-      let freeRects = [{ x: 0, z: 0, w: layerMinBw, l: bl }];
+      // Use MAX bw — short boxes see more board width. Tall boxes are
+      // already self-limited in placement via availW = min(r.w, box.bw - r.x).
+      const layerMaxBw = Math.max(...allBoxes.map(b => b.bw));
+      let freeRects = [{ x: 0, z: 0, w: layerMaxBw, l: bl }];
       let placements = [];  // [{box, x, z}]
 
       for (const box of allBoxes) {
@@ -709,7 +711,7 @@ function recalc() {
         pMaxZ = Math.max(pMaxZ, p.z + p.box.e.effL);
       }
       const blockW = pMaxX - pMinX, blockL = pMaxZ - pMinZ;
-      const xOff = (layerMinBw - blockW) / 2 - pMinX;
+      const xOff = (layerMaxBw - blockW) / 2 - pMinX;
       const zOff = (bl - blockL) / 2 - pMinZ;
 
       for (const { box, x, z } of placements) {
