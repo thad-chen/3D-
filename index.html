@@ -605,12 +605,11 @@ function recalc() {
       cumH += layerHeights[lyr];
     }
 
-    // === Manual mode: shelf packing + center on board ===
-    // Algorithm:
-    //   1. Sort boxes by footprint descending (largest first = better utilization)
-    //   2. Shelf packing: each shelf fills X → wrap to next shelf in Z
-    //   3. After all shelves packed, center the entire block on the board
-    //   4. Per-box boardWidth (different heights see different widths)
+    // === Manual mode: MaxRects BSSF 2D bin packing ===
+    // Maintains a dynamic list of free rectangular spaces.
+    // For each box, picks the rectangle with Best Short Side Fit — the
+    // smallest leftover after placement in either dimension.  After placing,
+    // the used rectangle is split and the remaining free areas are re-added.
     
     for (let lyr = 0; lyr < maxLayers; lyr++) {
       const yBase = layerYBase[lyr];
@@ -630,78 +629,94 @@ function recalc() {
       }
       if (allBoxes.length === 0) continue;
 
-      // Sort by footprint (area) descending → big boxes first, less fragmentation
+      // Sort by footprint descending → big boxes placed first, less fragmentation
       allBoxes.sort((a, b) => (b.e.effW * b.e.effL) - (a.e.effW * b.e.effL));
 
-      // --- Shelf packing (Best-Fit) ---
-      // Each shelf tracks maxW = min(bw of every box on it) — the actual
-      // X-capacity ceiling. A tall box's narrow bw limits the entire shelf,
-      // even if a shorter box claims to see more room.
-      let shelves = [];  // { z, w, depth, maxW, boxes: [{box, xInShelf}] }
+      // --- MaxRects BSSF ---
+      // freeRects: [{x, z, w, l}] — unoccupied rectangles in board coords
+      // When a box needs bw narrower than the rect, we only use the portion
+      // within its bw constraint.
+      const layerMinBw = Math.min(...allBoxes.map(b => b.bw));
+      let freeRects = [{ x: 0, z: 0, w: layerMinBw, l: bl }];
+      let placements = [];  // [{box, x, z}]
+
       for (const box of allBoxes) {
         const e = box.e;
-        let bestSi = -1, bestRemain = Infinity;
+        let bestRi = -1, bestScore = Infinity, bestX = 0, bestZ = 0;
 
-        for (let si = 0; si < shelves.length; si++) {
-          const s = shelves[si];
-          const limit = s.maxW;  // tightest bw on this shelf
-          const afterW = s.w + e.effW;
-          // Must fit within BOTH: the shelf's existing capacity AND new box's own bw
-          if (afterW <= limit && afterW <= box.bw) {
-            const remain = limit - afterW;
-            if (remain < bestRemain) {
-              bestRemain = remain;
-              bestSi = si;
-              if (remain === 0) break;
-            }
+        for (let ri = 0; ri < freeRects.length; ri++) {
+          const r = freeRects[ri];
+          // Clamp: box can't use width beyond its own bw
+          const availW = Math.min(r.w, box.bw - r.x);
+          if (availW < e.effW || r.l < e.effL) continue;
+
+          const scoreW = availW - e.effW;
+          const scoreL = r.l - e.effL;
+          const score = Math.min(scoreW, scoreL);  // BSSF
+          if (score < bestScore) {
+            bestScore = score;
+            bestRi = ri;
+            bestX = r.x;
+            bestZ = r.z;
+            if (score === 0) break; // perfect fit
           }
         }
 
-        if (bestSi >= 0) {
-          const s = shelves[bestSi];
-          s.boxes.push({ box, xInShelf: s.w });
-          s.w += e.effW;
-          s.depth = Math.max(s.depth, e.effL);
-          s.maxW = Math.min(s.maxW, box.bw);  // tighten capacity
-        } else {
-          const zPos = shelves.length > 0
-            ? shelves[shelves.length - 1].z + shelves[shelves.length - 1].depth
-            : 0;
-          shelves.push({
-            z: zPos,
-            w: e.effW,
-            depth: e.effL,
-            maxW: box.bw,
-            boxes: [{ box, xInShelf: 0 }]
-          });
+        if (bestRi < 0) { overflowCount++; continue; }
+
+        placements.push({ box, x: bestX, z: bestZ });
+
+        // --- Split the used rectangle ---
+        const r = freeRects[bestRi];
+        freeRects.splice(bestRi, 1);
+        const rightW = r.w - e.effW;
+        const bottomL = r.l - e.effL;
+
+        if (rightW > 0 && bottomL > 0) {
+          // Split: prefer larger piece last (less fragmentation)
+          if (rightW > bottomL) {
+            freeRects.push({ x: bestX + e.effW, z: bestZ,         w: rightW,   l: r.l });
+            freeRects.push({ x: bestX,            z: bestZ + e.effL, w: e.effW,   l: bottomL });
+          } else {
+            freeRects.push({ x: bestX,            z: bestZ + e.effL, w: r.w,      l: bottomL });
+            freeRects.push({ x: bestX + e.effW,   z: bestZ,         w: rightW,   l: e.effL });
+          }
+        } else if (rightW > 0) {
+          freeRects.push({ x: bestX + e.effW, z: bestZ, w: rightW, l: r.l });
+        } else if (bottomL > 0) {
+          freeRects.push({ x: bestX, z: bestZ + e.effL, w: r.w, l: bottomL });
         }
+
+        // Quick containment prune: remove rects swallowed by another
+        freeRects = freeRects.filter((a, ia) => {
+          for (let ib = 0; ib < freeRects.length; ib++) {
+            if (ia === ib || a.w <= 0 || a.l <= 0) continue;
+            const b = freeRects[ib];
+            if (a.x >= b.x && a.z >= b.z && a.x + a.w <= b.x + b.w && a.z + a.l <= b.z + b.l) return false;
+          }
+          return a.w > 0 && a.l > 0;
+        });
       }
 
-      // --- Compute block dimensions ---
-      let totalZ = 0;
-      for (const s of shelves) {
-        totalZ = Math.max(totalZ, s.z + s.depth);
-      }
+      if (placements.length === 0) continue;
 
-      // --- Check Z overflow ---
-      if (totalZ > bl) {
-        for (const s of shelves) {
-          for (const item of s.boxes) overflowCount++;
-        }
-        continue;
+      // --- Compute bounding box, center on board ---
+      let pMinX = Infinity, pMaxX = 0, pMinZ = Infinity, pMaxZ = 0;
+      for (const p of placements) {
+        pMinX = Math.min(pMinX, p.x);
+        pMaxX = Math.max(pMaxX, p.x + p.box.e.effW);
+        pMinZ = Math.min(pMinZ, p.z);
+        pMaxZ = Math.max(pMaxZ, p.z + p.box.e.effL);
       }
+      const blockW = pMaxX - pMinX, blockL = pMaxZ - pMinZ;
+      const xOff = (layerMinBw - blockW) / 2 - pMinX;
+      const zOff = (bl - blockL) / 2 - pMinZ;
 
-      // --- Place boxes (per-shelf X-centering, global Z-centering) ---
-      const zBlockOffset = (bl - totalZ) / 2;
-      for (const shelf of shelves) {
-        const xOff = (shelf.maxW - shelf.w) / 2;
-        for (const { box, xInShelf } of shelf.boxes) {
-          const e = box.e;
-          const cx = xOff + xInShelf + e.effW / 2;
-          const cz = zBlockOffset + shelf.z + e.effL / 2;
-          addBox(cx, box.yCenter, cz, e.effW, e.H, e.effL, e.color, false);
-          totalBoxes++;
-        }
+      for (const { box, x, z } of placements) {
+        const e = box.e;
+        addBox(x + xOff + e.effW / 2, box.yCenter, z + zOff + e.effL / 2,
+               e.effW, e.H, e.effL, e.color, false);
+        totalBoxes++;
       }
     }
   } else {
